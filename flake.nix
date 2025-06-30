@@ -25,6 +25,7 @@
           # Optional: Set some environment variables if needed
           shellHook = ''
             PS1='nodenix: '
+            export GOOGLE_CLOUD_PROJECT="reelraider"
             echo "Welcome to the Node.js TypeScript development shell!"
           '';
         };
