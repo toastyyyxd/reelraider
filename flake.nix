@@ -16,16 +16,18 @@
       {
         devShell = pkgs.mkShell {
           # Shell environment setup for development
-          buildInputs = [
-            pkgs.nodejs
-            pkgs.nodePackages.typescript
-            pkgs.cloudflared
-            pkgs.python312
+          buildInputs = with pkgs; [
+            nodejs
+            nodePackages.typescript
+            cloudflared
+
+            python312
+            python312Packages.pandas
+            python312Packages.numpy
           ];
 
           # Optional: Set some environment variables if needed
           shellHook = ''
-            PS1='nodenix: '
             export GOOGLE_CLOUD_PROJECT="reelraider"
             echo "Welcome to the Node.js TypeScript development shell!"
           '';
