@@ -3,11 +3,17 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# Install dependencies
 COPY package*.json ./
-RUN npm install --production || true
+RUN npm ci --omit=dev
 
-COPY src ./src
+# Copy source and build
+COPY . .
+
+# Build TypeScript (if not already built)
+RUN npm run build
 
 EXPOSE 8000
 
-CMD ["node", "src/server/app-fastify.js"]
+# Start the server (using the built JS output)
+CMD ["node", "dist/server/index.js"]
