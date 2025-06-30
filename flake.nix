@@ -20,6 +20,7 @@
             pkgs.nodejs
             pkgs.nodePackages.typescript
             pkgs.cloudflared
+            pkgs.python312
           ];
 
           # Optional: Set some environment variables if needed
@@ -43,6 +44,7 @@
             pkgs.nodejs
             pkgs.nodePackages.typescript
             pkgs.cacert
+            pkgs.python312
           ];
 
           # NPM install and TypeScript compile

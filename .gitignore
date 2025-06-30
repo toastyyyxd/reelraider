@@ -57,3 +57,7 @@ out-storybook/
 # Static site generators
 public/
 .cache-loader/
+
+# Datasets
+.zip
+.gz
