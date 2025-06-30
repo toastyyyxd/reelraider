@@ -1,0 +1,10 @@
+version: '3.8'
+services:
+  cineverse:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src
+    environment:
+      - NODE_ENV=production

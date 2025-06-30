@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ReelRaider | AI Movie Discovery</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <!-- App Header -->
+    <div class="app-header fade-in">
+        <div class="logo">ReelRaider</div>
+        <div class="tagline">Swipe. Stream. Plunder.</div>
+    </div>
+    
+    <!-- Search Bar -->
+    <div class="search-container fade-in">
+        <div class="search-bar">
+            <i class="fas fa-search"></i>
+            <input type="text" placeholder="Search movies, directors, actors...">
+        </div>
+    </div>
+    
+    <!-- Main Content -->
+    <div class="content">
+        <!-- Gallery View -->
+        <div class="view active" id="galleryView">
+            <div class="gallery-grid">
+                <!-- Movie Cards -->
+                <div class="movie-card">
+                    <div class="movie-poster">
+                        <div class="movie-title">Inception</div>
+                        <div class="movie-year">2010</div>
+                    </div>
+                    <div class="movie-info">
+                        <div class="rating">
+                            <div class="stars">
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star-half-alt"></i>
+                            </div>
+                            <div class="rating-value">4.5/5</div>
+                        </div>
+                        <div class="summary">
+                            A thief who steals corporate secrets through dream-sharing technology is given the task of planting an idea into the mind of a C.E.O.
+                        </div>
+                        <div class="review">
+                            "Mind-bending visuals and a complex narrative that rewards multiple viewings."
+                            <div class="review-author">@film_critic</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="movie-card">
+                    <div class="movie-poster">
+                        <div class="movie-title">The Matrix</div>
+                        <div class="movie-year">1999</div>
+                    </div>
+                    <div class="movie-info">
+                        <div class="rating">
+                            <div class="stars">
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="far fa-star"></i>
+                            </div>
+                            <div class="rating-value">4.0/5</div>
+                        </div>
+                        <div class="summary">
+                            A computer hacker learns from mysterious rebels about the true nature of his reality and his role in the war against its controllers.
+                        </div>
+                        <div class="review">
+                            "Revolutionary special effects and philosophical depth that defined a generation."
+                            <div class="review-author">@sci_fi_fan</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="movie-card">
+                    <div class="movie-poster">
+                        <div class="movie-title">Parasite</div>
+                        <div class="movie-year">2019</div>
+                    </div>
+                    <div class="movie-info">
+                        <div class="rating">
+                            <div class="stars">
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                            </div>
+                            <div class="rating-value">4.8/5</div>
+                        </div>
+                        <div class="summary">
+                            Greed and class discrimination threaten the newly formed symbiotic relationship between the wealthy Park family and the destitute Kim clan.
+                        </div>
+                        <div class="review">
+                            "A masterpiece of social commentary that seamlessly blends genres and emotions."
+                            <div class="review-author">@cinema_lover</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="movie-card">
+                    <div class="movie-poster">
+                        <div class="movie-title">Interstellar</div>
+                        <div class="movie-year">2014</div>
+                    </div>
+                    <div class="movie-info">
+                        <div class="rating">
+                            <div class="stars">
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                                <i class="fas fa-star"></i>
+                            </div>
+                            <div class="rating-value">4.7/5</div>
+                        </div>
+                        <div class="summary">
+                            A team of explorers travel through a wormhole in space in an attempt to ensure humanity's survival.
+                        </div>
+                        <div class="review">
+                            "Visually stunning and emotionally powerful, with groundbreaking scientific accuracy."
+                            <div class="review-author">@space_enthusiast</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Reels View -->
+        <div class="view" id="reelsView">
+            <div class="reel-container">
+                <div class="reel-video"></div>
+                <div class="reel-info">
+                    <div class="reel-title">
+                        Blade Runner 2049
+                        <span class="reel-rating">4.6</span>
+                    </div>
+                    <div class="reel-meta">
+                        <span>Denis Villeneuve</span>
+                        <span>Sci-Fi, Drama</span>
+                        <span>2h 44m</span>
+                    </div>
+                    <div class="reel-actions">
+                        <div class="action-btn">
+                            <i class="fas fa-heart"></i>
+                            <span>Like</span>
+                        </div>
+                        <div class="action-btn">
+                            <i class="fas fa-comment"></i>
+                            <span>Comment</span>
+                        </div>
+                        <div class="action-btn">
+                            <i class="fas fa-share-alt"></i>
+                            <span>Share</span>
+                        </div>
+                        <div class="action-btn">
+                            <i class="fas fa-bookmark"></i>
+                            <span>Save</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Dynamic Island -->
+    <div class="dynamic-island">
+        <div class="island-btn active" data-view="galleryView">
+            <i class="fas fa-th-large"></i>
+            <span>Gallery</span>
+        </div>
+        <div class="island-btn" data-view="reelsView">
+            <i class="fas fa-play-circle"></i>
+            <span>Reels</span>
+        </div>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+</body>
+</html>
