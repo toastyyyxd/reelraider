@@ -19,6 +19,7 @@
           buildInputs = [
             pkgs.nodejs
             pkgs.nodePackages.typescript
+            pkgs.cloudflared
           ];
 
           # Optional: Set some environment variables if needed
