@@ -6,7 +6,7 @@ yarn-error.log*
 pnpm-debug.log*
 
 # Build output
-dist/
+/dist/
 build/
 out/
 coverage/
@@ -59,7 +59,7 @@ public/
 .cache-loader/
 
 # Datasets
-datasets/raw
+datasets/raw/
 
 # Direnv
 .direnv/
