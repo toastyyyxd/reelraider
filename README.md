@@ -1,21 +1,35 @@
-# CineVerse Static Server
+# ReelRaider
+"Swipe, Stream, Plunder."
+
+Fully personalized movie recommendations, powered by badly trained AI.
+
+There's nothing intelligent about it.
+
+It's just crappy machine learning but AI is a buzzword we have to use nowadays.
 
 ## Structure
-
-- `src/static/` — All static content (HTML, CSS, JS)
-- `src/server/` — Fastify Node.js server
-- `flake.nix`, `Dockerfile`, `docker-compose.yml` — Top-level configuration
+Vibecoded excuse of a codebase. I'm ashamed.
+- `src/static/` — static content (html, css, js)
+- `src/server/` — fastify, nodejs
+- `flake.nix`, `Dockerfile`, `docker-compose.yml` - config stuff
 
 ## Usage
-
-### Local (with Docker)
+Use docker.
 
 ```bash
 docker-compose up --build
 ```
 
-App will be available at http://localhost:8000
+App will be available at http://localhost:8000 or whatever
 
-### Development
-- Edit static files in `src/static/`
-- Edit server code in `src/server/`
+## Datasets
+
+Download these into `/datasets/raw`:
+- From https://datasets.imdbws.com/
+  - `name.basics.tsv.gz`
+  - `title.basics.tsv.gz`
+  - `title.principals.tsv.gz`
+  - `title.ratings.tsv.gz`
+- From TMDB
+  - Overviews, API scraped with `/datasets/add_overviews.py`
+  
