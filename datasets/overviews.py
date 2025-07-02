@@ -12,13 +12,14 @@ from typing import Dict
 from queue import Queue, Empty
 import requests as rq
 import pandas as pd
+import numpy as np
 
 # --- Config ---
 
 MAX_RETRIES = 2
-MAX_WORKERS = 10
-BATCH_SIZE = 10
-BATCH_INTERVAL = 2
+MAX_WORKERS = 32
+BATCH_SIZE = 20
+BATCH_INTERVAL = 1
 CHECKPOINT_EVERY = 50
 RATE_LIMIT_WAIT = 10  # seconds to wait on 429
 PARQUET_INPUT_PATH = "dist/merged_raw.parquet"
@@ -81,7 +82,7 @@ def get_overview(id: str) -> str | OverviewFetchError:
     movie_results = data.get('movie_results')
     if movie_results and isinstance(movie_results, list) and len(movie_results) > 0:
         overview = movie_results[0].get('overview')
-        if overview is not None:
+        if overview is not None and overview != "":
             return overview
         else:
             return OverviewFetchError.NO_OVERVIEW
@@ -117,9 +118,13 @@ def worker(id: str) -> None:
                 if retry_map[id] <= MAX_RETRIES:
                     id_queue.put(id)
             elif res == OverviewFetchError.NO_DATA:
-                print(f"No data for {id}, skipping...")
+                print(f"No data for {id}, setting to null...")
+                with df_lock:
+                    source_df.loc[source_df['tconst'] == id, 'overview'] = pd.NA
             elif res == OverviewFetchError.NO_OVERVIEW:
-                print(f"No overview for {id}, skipping...")
+                print(f"No overview for {id}, setting to null...")
+                with df_lock:
+                    source_df.loc[source_df['tconst'] == id, 'overview'] = pd.NA
         else:
             with df_lock:
                 source_df.loc[source_df['tconst'] == id, 'overview'] = res
@@ -182,9 +187,8 @@ else:
     source_df = load(PARQUET_INPUT_PATH)
     if 'overview' not in source_df.columns:
         source_df['overview'] = ""
-
-# Only queue IDs that do not have an overview yet
-ids_to_queue = source_df[source_df['overview'].isnull() | (source_df['overview'] == "")]['tconst'].unique()
+# Only queue IDs that do not have an overview yet (empty string means not checked)
+ids_to_queue = source_df[source_df['overview'] == ""]['tconst'].unique()
 for id in ids_to_queue:
     id_queue.put(id)
     retry_map[id] = 0
@@ -238,4 +242,12 @@ except KeyboardInterrupt:
     sys.stdout.flush()
     exit(0)
 print("All batches processed.")
-source_df.to_parquet(PARQUET_OUTPUT_PATH, index=False)
+
+with df_lock:
+    source_df.to_parquet(PARQUET_CHECKPOINT_PATH, index=False)
+    filtered_df = source_df[source_df['overview'].notna() & (source_df['overview'] != "")]
+    filtered_df.to_parquet(PARQUET_OUTPUT_PATH, index=False)
+    print(f"Saved checkpoint to {PARQUET_CHECKPOINT_PATH} and filtered output to {PARQUET_OUTPUT_PATH}.")
+    print(f"Total rows with overview: {filtered_df.shape[0]} out of {source_df.shape[0]} total, {filtered_df.shape[0] / source_df.shape[0] * 100:.2f}%")
+    print("DataFrame dtypes:")
+    print(filtered_df.dtypes)
