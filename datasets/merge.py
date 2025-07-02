@@ -29,9 +29,11 @@ def merge_ratings(movies: pd.DataFrame, ratings: pd.DataFrame) -> pd.DataFrame:
 def clean_types(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     n_before = len(df)
-    # Ensure string columns
-    for col in ['tconst', 'titleType', 'primaryTitle', 'originalTitle', 'genres']:
-        df[col] = df[col].astype(str)
+    # Ensure string columns use pandas 'string' dtype (for downstream varchar)
+    for col in ['tconst', 'titleType', 'primaryTitle', 'originalTitle']:
+        df[col] = df[col].astype('string')
+    # Convert genres from comma-separated string to list of strings (list of varchars)
+    df['genres'] = df['genres'].apply(lambda x: x.split(',') if pd.notna(x) and x != '' else [])
     # isAdult as boolean (0/1)
     df['isAdult'] = df['isAdult'].fillna(0).astype(int).astype(bool)
     # startYear and endYear as nullable Int64
@@ -111,3 +113,5 @@ quality_movies.to_parquet('dist/merged_raw.parquet',
     engine='pyarrow'
 )
 print("Saved to 'dist/merged_raw.parquet'")
+print("Dtypes:")
+print(quality_movies.dtypes)

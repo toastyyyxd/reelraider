@@ -17,9 +17,9 @@ import numpy as np
 # --- Config ---
 
 MAX_RETRIES = 2
-MAX_WORKERS = 32
-BATCH_SIZE = 20
-BATCH_INTERVAL = 1
+MAX_WORKERS = 16
+BATCH_SIZE = 25
+BATCH_INTERVAL = 2
 CHECKPOINT_EVERY = 50
 RATE_LIMIT_WAIT = 10  # seconds to wait on 429
 PARQUET_INPUT_PATH = "dist/merged_raw.parquet"
