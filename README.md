@@ -25,7 +25,7 @@ App will be available at http://localhost:8000 or whatever
 ## Datasets
 
 Download these into `/datasets/raw`:
-- From https://datasets.imdbws.com/
+- Run `/datasets/fetch_raw.sh`, from https://datasets.imdbws.com/
   - `name.basics.tsv.gz`
   - `title.basics.tsv.gz`
   - `title.principals.tsv.gz`
