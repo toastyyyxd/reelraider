@@ -16,6 +16,22 @@
       {
         devShell = pkgs.mkShell {
           # Shell environment setup for development
+            buildInputs = with pkgs; [
+            nodejs
+            nodePackages.typescript
+            cloudflared
+
+            python312
+            python312Packages.pandas
+            python312Packages.numpy
+            python312Packages.requests
+            python312Packages.pyarrow
+
+            python312Packages."sentence-transformers"
+            python312Packages.faiss-cpu
+            python312Packages.tqdm
+            python312Packages.scikit-learn
+            ];
 
           # Optional: Set some environment variables if needed
           shellHook = ''
