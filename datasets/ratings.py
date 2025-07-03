@@ -86,13 +86,11 @@ def boost_niches(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def print_quality_stats(quality_movies: pd.DataFrame):
-    print(f"Quality movies: {len(quality_movies):,}")
-    print(f"New median votes: {quality_movies['numVotes'].median():,}")
-    print(f"New avg rating: {quality_movies['averageRating'].mean():.1f}")
+    print(f"Quality movies: {len(quality_movies):,}"))2
     print(f"New year range: {quality_movies['startYear'].min()} - {quality_movies['startYear'].max()}")
     boosted = quality_movies[quality_movies['ratingWeight'] > 0]
     percent_boosted = len(boosted) / len(quality_movies) if len(quality_movies) > 0 else 0
-    print(f"Boosted movies (weight > 0): {len(boosted):,} ({percent_boosted:.2%})")
+    print(f"Boosted movies (weight > 0): {len(boosted):,} ({percent_boosted:.32`%})")
     return quality_movies
 
 basics = load_basics('raw/title.basics.tsv.gz')
