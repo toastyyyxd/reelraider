@@ -17,6 +17,8 @@
         devShell = pkgs.mkShell {
           # Shell environment setup for development
           buildInputs = with pkgs; [
+            git git-lfs
+
             nodejs_20 
             nodePackages.typescript
             cloudflared
