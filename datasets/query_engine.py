@@ -196,7 +196,7 @@ class MovieQueryEngine:
         )
         return self.search(request)
     
-    def get_recommendations_for_movie(self, movie_title: str, 
+    def get_recommendations_for_movie(self, movie_tid: int, 
                                     max_results: int = 10,
                                     use_cultural_weights: bool = True,
                                     plot_weight: float = 0.44,
@@ -207,7 +207,7 @@ class MovieQueryEngine:
         Get movie recommendations based on a specific movie using culturally-aware search
         
         Args:
-            movie_title: Title of the movie to base recommendations on
+            movie_tid: Movie TID (converted from IMDb tconst) to base recommendations on
             max_results: Maximum number of recommendations
             use_cultural_weights: Whether to use cultural preset weights (recommended)
             plot_weight: Weight for plot similarity (used if use_cultural_weights=True)
@@ -218,16 +218,14 @@ class MovieQueryEngine:
         Returns:
             Polars DataFrame with similar movies using cultural awareness
         """
-        # Find the movie in our database
-        movie_matches = self.movies_df.filter(
-            pl.col("title").str.to_lowercase().str.contains(movie_title.lower())
-        )
+        # Find the movie by tid
+        movie_matches = self.movies_df.filter(pl.col("tid") == movie_tid)
         
         if len(movie_matches) == 0:
-            logger.warning(f"Movie '{movie_title}' not found")
+            logger.warning(f"Movie with TID '{movie_tid}' not found")
             return pl.DataFrame()
         
-        # Use the first match
+        # Use the first (and should be only) match
         movie_row = movie_matches.row(0, named=True)
         source_tid = movie_row['tid']  # Get the tid for reliable filtering
         
@@ -273,6 +271,54 @@ class MovieQueryEngine:
             return all_results.filter(
                 pl.col("tid") != source_tid
             ).head(max_results)
+    
+    def get_recommendations_for_movie_by_title(self, movie_title: str, 
+                                              max_results: int = 10,
+                                              use_cultural_weights: bool = True,
+                                              plot_weight: float = 0.44,
+                                              genre_weight: float = 0.13,
+                                              localization_weight: float = 0.1,
+                                              popularity_weight: float = 0.33) -> pl.DataFrame:
+        """
+        Get movie recommendations based on a movie title (fallback method)
+        
+        Args:
+            movie_title: Title of the movie to base recommendations on
+            max_results: Maximum number of recommendations
+            use_cultural_weights: Whether to use cultural preset weights (recommended)
+            plot_weight: Weight for plot similarity
+            genre_weight: Weight for genre similarity
+            localization_weight: Weight for cultural localization
+            popularity_weight: Weight for popularity
+            
+        Returns:
+            Polars DataFrame with similar movies using cultural awareness
+        """
+        # Find the movie in our database by title
+        movie_matches = self.movies_df.filter(
+            pl.col("title").str.to_lowercase().str.contains(movie_title.lower())
+        )
+        
+        if len(movie_matches) == 0:
+            logger.warning(f"Movie '{movie_title}' not found")
+            return pl.DataFrame()
+        
+        # Use the first match and get its tid
+        movie_row = movie_matches.row(0, named=True)
+        movie_tid = movie_row['tid']
+        
+        logger.info(f"Found movie '{movie_row['title']}' with TID {movie_tid}, using TID-based recommendations")
+        
+        # Delegate to the TID-based method
+        return self.get_recommendations_for_movie(
+            movie_tid=movie_tid,
+            max_results=max_results,
+            use_cultural_weights=use_cultural_weights,
+            plot_weight=plot_weight,
+            genre_weight=genre_weight,
+            localization_weight=localization_weight,
+            popularity_weight=popularity_weight
+        )
     
     def get_movie_stats(self) -> Dict[str, Any]:
         """Get statistics about the movie database"""
@@ -344,8 +390,8 @@ def main():
     if args.preset:
         if args.preset == 'balanced':
             # Default balanced preset - good for general queries with cultural awareness
-            args.plot_weight, args.genre_weight = 0.515, 0.215
-            args.localization_weight, args.popularity_weight = 0.05, 0.2
+            args.plot_weight, args.genre_weight = 0.57, 0.15
+            args.localization_weight, args.popularity_weight = 0.07, 0.16
         elif args.preset == 'cultural':
             # Cultural preset - emphasizes cultural relevance and plot semantics
             args.plot_weight, args.genre_weight = 0.532, 0.1
@@ -383,7 +429,7 @@ def main():
               f"localization={args.localization_weight:.2f}, popularity={args.popularity_weight:.2f}")
         print()
         
-        results = engine.get_recommendations_for_movie(
+        results = engine.get_recommendations_for_movie_by_title(
             args.similar_to, 
             args.max_results,
             use_cultural_weights=True,

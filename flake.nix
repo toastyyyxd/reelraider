@@ -17,7 +17,7 @@
         devShell = pkgs.mkShell {
           # Shell environment setup for development
           buildInputs = with pkgs; [
-            nodejs
+            nodejs_20 
             nodePackages.typescript
             cloudflared
 
@@ -43,6 +43,9 @@
             python312Packages.matplotlib
             python312Packages.plotly
             python312Packages.seaborn
+
+            python312Packages.grpcio
+            python312Packages.grpcio-tools
           ];
 
           # Optional: Set some environment variables if needed

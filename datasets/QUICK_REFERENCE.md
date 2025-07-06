@@ -90,9 +90,8 @@ python -m datasets.query_engine --similar-to "The Godfather" --preset cultural
 
 ### Generated Data  
 - **`dist/movies_processed_sn.parquet`** - 25,096 movies with metadata
-- **`dist/embedding_components.npz`** - Separate plot/genre/localization/popularity embeddings
+- **`dist/culturally_aware_model.npz`** - Separate plot/genre/localization/popularity embeddings
 - **`dist/culturally_aware_model.json`** - Model configuration
-- **`dist/movies_culturally_aware.index`** - FAISS search index
 
 ### Key Innovations
 - **128-dimension localization vectors** (vs original 32-dim) for effective cultural awareness

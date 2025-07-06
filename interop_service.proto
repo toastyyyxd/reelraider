@@ -1,0 +1,89 @@
+
+syntax = "proto3";
+
+package reelraider;
+
+// Preset search types as defined in the query engine (e.g., "popular", "niche", etc.)
+enum SearchPreset {
+  PRESET_UNSPECIFIED = 0;
+  PRESET_POPULAR = 1;
+  PRESET_NICHE = 2;
+  PRESET_CULTURAL = 3;
+  // Add more as needed, matching the Python engine's presets
+}
+
+service InteropService {
+  // Search with a custom request or preset
+  rpc Search (SearchRequest) returns (SearchResponse);
+  // Get movie recommendations based on a specific movie
+  rpc GetRecommendations (RecommendationRequest) returns (SearchResponse);
+}
+
+message SearchRequest {
+  string query = 1;
+  repeated string countries = 2;
+  repeated string languages = 3;
+  int32 max_results = 4;
+  float min_rating = 5;
+  int32 min_votes = 6;
+  int32 year_from = 7;
+  int32 year_to = 8;
+  SearchPreset preset = 9;
+  // Optional
+  float plot_weight = 10;
+  float genre_weight = 11;
+  float localization_weight = 12;
+  float popularity_weight = 13;
+}
+
+message RecommendationRequest {
+  string imdb_id = 1;  // IMDb tconst (e.g., "tt0816692")
+  repeated string countries = 2;
+  repeated string languages = 3;
+  int32 max_results = 4;
+  bool use_cultural_weights = 5;
+  SearchPreset preset = 6;
+  // Optional custom weights (override preset if provided)
+  float plot_weight = 7;
+  float genre_weight = 8;
+  float localization_weight = 9;
+  float popularity_weight = 10;
+}
+
+message SearchResponse {
+  repeated MovieResult results = 1;
+  ErrorInfo error = 2;  // Optional error information
+}
+
+message ErrorInfo {
+  ErrorCode code = 1;
+  string message = 2;
+  string details = 3;  // Additional context or suggestions
+}
+
+enum ErrorCode {
+  ERROR_NONE = 0;
+  ERROR_INVALID_QUERY = 1;
+  ERROR_INVALID_IMDB_ID = 2;
+  ERROR_MOVIE_NOT_FOUND = 3;
+  ERROR_INVALID_PARAMETERS = 4;
+  ERROR_SEARCH_FAILED = 5;
+  ERROR_RECOMMENDATIONS_FAILED = 6;
+  ERROR_SERVICE_UNAVAILABLE = 7;
+}
+
+message MovieResult {
+  string title = 1;
+  string imdb_id = 2;
+  int32 year = 3;
+  float rating = 4;
+  int32 votes = 5;
+  float popularity_score = 6;
+  repeated string countries = 7;
+  repeated string languages = 8;
+  repeated string genres = 9;
+  string plot = 10;
+  string poster = 11;
+  float similarity = 12;
+  int32 rank = 13;
+}

@@ -17,6 +17,8 @@ coloredlogs.install(
 
 def tid_to_tconst(tid: uint32) -> str:
     return f"tt{str(tid).zfill(7)}"
+def tconst_to_tid(tconst: str) -> uint32:
+    return uint32(int(tconst[2:]))  # Remove 'tt' prefix and convert to uint32
 
 def read_csv_file(path: Path, lazy: bool = False) -> pl.LazyFrame | pl.DataFrame:
     """

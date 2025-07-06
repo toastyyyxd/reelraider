@@ -1,9 +1,19 @@
 services:
-  cineverse:
+  reelraider-web:
     build: .
     ports:
       - "8000:8000"
     volumes:
-      - ./src:/app/src
+      - ./dist:/app/dist
     environment:
       - NODE_ENV=production
+  reelraider-service: # grpc with python
+    build:
+      context: ./datasets
+      dockerfile: Dockerfile
+    ports:
+      - "50051:50051"
+    volumes:
+      - ./datasets:/app/datasets
+    environment:
+      - PYTHONUNBUFFERED=1
