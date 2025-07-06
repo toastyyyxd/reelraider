@@ -6,8 +6,6 @@ BASE_URL="https://datasets.imdbws.com"
 
 FILES=(
     "name.basics.tsv.gz"
-    "title.basics.tsv.gz"
-    "title.principals.tsv.gz"
     "title.ratings.tsv.gz"
 )
 

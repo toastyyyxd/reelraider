@@ -23,13 +23,11 @@ docker-compose up --build
 App will be available at http://localhost:8000 or whatever
 
 ## Datasets
+See the full [datasets/README.md](datasets/README.md) for details on data sources, legal notices, usage instructions, and requirements.
 
-Download these into `/datasets/raw`:
-- Run `/datasets/fetch_raw.sh`, from https://datasets.imdbws.com/
-  - `name.basics.tsv.gz`
-  - `title.basics.tsv.gz`
-  - `title.principals.tsv.gz`
-  - `title.ratings.tsv.gz`
-- From TMDB
-  - Overviews, API scraped with `/datasets/add_overviews.py`
-  
+## LICENSE
+Credits:
+- copilot, sonnet 4
+- me
+- omdbapi
+See the [LICENSE](./LICENSE) at the root of this repository.

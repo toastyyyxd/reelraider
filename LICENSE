@@ -1,0 +1,44 @@
+```
+MIT License
+
+Copyright (c) 2025 toasty
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+---
+
+### Data Sources, Legal & Usage Notice
+
+ All resulting data is sourced from, including but not limited to, OMDB (CC BY-NC 4.0), under their respective terms. Please review and comply with the terms of all data providers.
+
+This project uses data from the following sources:
+
+> **Movie data provided by** OMDB API (https://www.omdbapi.com/)
+> 
+> Licensed under CC BY-NC 4.0 (https://creativecommons.org/licenses/by-nc/4.0/)
+
+> **IMDb data is used solely for initial filtering (IDs and ratings) to select which movies to process.**
+> No content, metadata, or descriptive information is used from IMDb; all resulting data and outputs are sourced from OMDB and are not derivative works of IMDb data.
+> ```
+> Information courtesy of
+> IMDb
+> (https://www.imdb.com).
+> Used with permission.
+> ```
+> The above attribution is included solely to comply with IMDb's requirements. No IMDb content, metadata, or descriptive information is used in this project or its outputs.

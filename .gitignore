@@ -60,6 +60,13 @@ public/
 
 # Datasets
 datasets/raw/
+datasets/dist/back
 
 # Direnv
 .direnv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd

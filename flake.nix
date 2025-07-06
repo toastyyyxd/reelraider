@@ -22,15 +22,27 @@
             cloudflared
 
             python312
-            python312Packages.pandas
+            python312Packages.pip
+            python312Packages.virtualenv
+            python312Packages.coloredlogs
+
+            python312Packages.polars # We are migrating to polars!
             python312Packages.numpy
-            python312Packages.requests
             python312Packages.pyarrow
 
+            python312Packages.httpx
+            python312Packages.tenacity
+
+            python312Packages.torch
             python312Packages."sentence-transformers"
-            python312Packages.faiss-cpu
+            python312Packages.spacy
+            python312Packages.faiss # not faiss-cpu, nix has a different naming scheme
             python312Packages.tqdm
             python312Packages.scikit-learn
+
+            python312Packages.matplotlib
+            python312Packages.plotly
+            python312Packages.seaborn
           ];
 
           # Optional: Set some environment variables if needed
