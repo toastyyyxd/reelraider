@@ -406,12 +406,7 @@
     "Yoruba": 243,
     "Zulu": 244
   },
-  "plot_weight": 0.5,
-  "genre_weight": 0.25,
-  "localization_weight": 0.05,
-  "popularity_weight": 0.2,
   "plot_dim": 1024,
-  "genre_dim": 64,
-  "localization_dim": 128,
-  "final_dim": 1217
+  "genre_dim": 128,
+  "localization_dim": 128
 }

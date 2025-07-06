@@ -1,6 +1,27 @@
+"""
+Culturally-Aware Movie Embedding Component Creator
+
+This module creates separate embedding components for runtime weighted search, enabling
+dynamic cultural tuning without rebuilding indices. It addresses the core problem that
+semantic similarity alone finds niche films instead of culturally iconic ones.
+
+The system generates individual components that can be combined at runtime:
+- Plot embeddings (semantic meaning)
+- Enriched genre embeddings (thematic categories)
+- Localization embeddings (cultural/regional relevance)
+- Popularity boost (promotes culturally iconic films)
+
+Key Output:
+The main output is create_separate_components() which generates an .npz file containing
+all embedding components, used by RuntimeWeightedSearch for dynamic weight adjustment.
+
+Configuration:
+All magic constants are centralized in CulturalEmbeddingConfig to enable easy tuning
+and experimentation. The global CONFIG instance can be updated at runtime.
+"""
+
 import polars as pl
 import numpy as np
-import faiss
 from datasets.utils import logger, read_parquet_file, write_parquet_file
 from pathlib import Path
 from sentence_transformers import SentenceTransformer
@@ -8,53 +29,111 @@ from sklearn.cluster import KMeans
 import hashlib
 import json
 from typing import List
+from dataclasses import dataclass
+
+@dataclass
+class CulturalEmbeddingConfig:
+    """Configuration class for culturally-aware embedding magic constants"""
+    
+    # Hash function constants for feature mapping
+    hash_multiplier_primary: int = 17
+    hash_multiplier_secondary: int = 31
+    hash_multiplier_tertiary: int = 53
+    hash_offset_secondary: int = 7
+    hash_offset_tertiary: int = 13
+    
+    # Signal strength constants
+    signal_strength_primary: float = 0.8
+    signal_strength_secondary: float = 0.6
+    signal_strength_tertiary: float = 0.3
+    signal_strength_hash_fallback: float = 0.7
+    max_tertiary_features: int = 3  # Maximum features to apply tertiary mapping
+    
+    # Clustering constants
+    min_subclusters: int = 2
+    subcluster_ratio: int = 3  # movies per subcluster
+    kmeans_random_state: int = 42
+    kmeans_n_init: int = 10
+    
+    # Popularity boost constants
+    popularity_epsilon: float = 1e-6
+    popularity_log_scale: float = 1000.0
+    popularity_log_offset: float = 1.0
+    popularity_high_threshold: float = 0.1
+    popularity_exponential_power: float = 1.5
+    popularity_boost_min: float = 0.01
+    popularity_boost_max: float = 2.0
+    popularity_boost_range: float = 1.99  # max - min
+    popularity_zero_threshold: float = 1e-10
+    
+    # Query processing constants
+    query_popularity_high: float = 1.5
+    query_popularity_low: float = 0.5
+    query_localization_fallback: float = 0.5
+    
+    # Semantic similarity constants
+    semantic_top_k: int = 20
+    semantic_weight_amplifier: float = 3.0
+    
+    # Localization enrichment constants
+    cluster_strength_base: float = 0.2
+    cluster_signal_strength: float = 0.3
+    remaining_dims_reserved: int = 16
+    max_cluster_hash_dims: int = 15
+    
+    # Hash fallback constants
+    hash_fallback_max_dims: int = 16
+    hash_byte_normalizer: float = 255.0
+    
+    # Dimension thresholds
+    large_dim_threshold: int = 64
+
+# Global configuration instance
+CONFIG = CulturalEmbeddingConfig()
 
 class CulturallyAwareMovieEmbedding:
-    def __init__(self, plot_dim=1024, genre_dim=64, localization_dim=32, 
-                 plot_weight=0.50, genre_weight=0.25, localization_weight=0.05, popularity_weight=0.20):
+    def __init__(self, plot_dim=1024, genre_dim=64, localization_dim=32):
         """
-        Culturally-aware movie embedding that balances semantic similarity with cultural relevance
+        Culturally-aware movie embedding component creator for runtime weighted search.
         
-        This system addresses the core problem: semantic similarity alone finds niche films
-        instead of culturally iconic ones. It combines:
+        This system creates separate embedding components that can be combined with different
+        weights at runtime, addressing the core problem that semantic similarity alone finds
+        niche films instead of culturally iconic ones.
+        
+        Components created:
         1. Plot embeddings (semantic meaning)
         2. Enriched genre embeddings (thematic categories)  
         3. Localization embeddings (cultural/regional relevance)
         4. Popularity boost (promotes culturally iconic films)
         
+        The main output is through create_separate_components() which generates an .npz file
+        used by RuntimeWeightedSearch for dynamic weight adjustment.
+        
         Args:
             plot_dim: Dimension of plot embeddings (semantic content)
             genre_dim: Target dimension for enriched genre embeddings
             localization_dim: Target dimension for country/language embeddings
-            plot_weight: Weight for plot embeddings (primary semantic signal)
-            genre_weight: Weight for genre embeddings (thematic relevance)
-            localization_weight: Weight for localization (cultural relevance)
-            popularity_weight: Weight for popularity boost (promotes iconic films)
         """
         self.plot_dim = plot_dim
         self.genre_dim = genre_dim
         self.localization_dim = localization_dim
-        self.plot_weight = plot_weight
-        self.genre_weight = genre_weight
-        self.localization_weight = localization_weight
-        self.popularity_weight = popularity_weight
-        
-        # Ensure weights sum to 1
-        total_weight = plot_weight + genre_weight + localization_weight + popularity_weight
-        self.plot_weight /= total_weight
-        self.genre_weight /= total_weight
-        self.localization_weight /= total_weight
-        self.popularity_weight /= total_weight
         
         # Vocabularies for cultural features
         self.country_vocab = {}
         self.language_vocab = {}
         
-        # Final embedding dimension
-        self.final_dim = plot_dim + genre_dim + localization_dim + 1  # +1 for popularity scalar
-        
         logger.info(f"Culturally-aware embedding dimensions: plot={plot_dim}, genre={genre_dim}, localization={localization_dim}, popularity=1")
-        logger.info(f"Weights: plot={self.plot_weight:.3f}, genre={self.genre_weight:.3f}, localization={self.localization_weight:.3f}, popularity={self.popularity_weight:.3f}")
+        logger.info("Weights will be handled dynamically at runtime by RuntimeWeightedSearch")
+    
+    def update_config(self, new_config: CulturalEmbeddingConfig):
+        """Update the configuration instance used by this embedding model"""
+        global CONFIG
+        CONFIG = new_config
+        logger.info("Updated culturally-aware embedding configuration")
+    
+    def get_config(self) -> CulturalEmbeddingConfig:
+        """Get the current configuration instance"""
+        return CONFIG
     
     def build_localization_vocabularies(self, movies_df):
         """Build vocabularies for countries and languages"""
@@ -161,12 +240,12 @@ class CulturallyAwareMovieEmbedding:
             
             # Create sub-clusters based on plot similarity
             remaining_dims = target_dim - total_localization_features
-            max_subclusters = min(max(2, len(plot_vecs) // 3), max(1, remaining_dims))
+            max_subclusters = min(max(CONFIG.min_subclusters, len(plot_vecs) // CONFIG.subcluster_ratio), max(1, remaining_dims))
             n_subclusters = min(len(plot_vecs), max_subclusters)
             
             if n_subclusters > 1:
                 plot_matrix = np.array(plot_vecs, dtype=np.float32)
-                kmeans = KMeans(n_clusters=n_subclusters, random_state=42, n_init=10)
+                kmeans = KMeans(n_clusters=n_subclusters, random_state=CONFIG.kmeans_random_state, n_init=CONFIG.kmeans_n_init)
                 subcluster_labels = kmeans.fit_predict(plot_matrix)
                 
                 # Create enriched vectors
@@ -216,7 +295,7 @@ class CulturallyAwareMovieEmbedding:
         
         if len(active_features) > 0:
             # With larger target_dim (e.g., 128), we can be more direct
-            if target_dim >= 64:
+            if target_dim >= CONFIG.large_dim_threshold:
                 # Use a smarter mapping that preserves more locality
                 # Map each active feature to multiple dimensions to reduce collisions
                 target_half = max(1, target_dim // 2)  # Ensure at least 1
@@ -224,43 +303,43 @@ class CulturallyAwareMovieEmbedding:
                 
                 for i, feature_idx in enumerate(active_features):
                     # Map each feature to 2-3 dimensions using different hash functions
-                    base_pos = (feature_idx * 17) % target_half  # Use first half
-                    enriched[base_pos] = 0.8  # Strong signal
+                    base_pos = (feature_idx * CONFIG.hash_multiplier_primary) % target_half  # Use first half
+                    enriched[base_pos] = CONFIG.signal_strength_primary  # Strong signal
                     
                     # Add secondary mapping to reduce collisions
-                    secondary_pos = (feature_idx * 31 + 7) % target_half + target_half
+                    secondary_pos = (feature_idx * CONFIG.hash_multiplier_secondary + CONFIG.hash_offset_secondary) % target_half + target_half
                     if secondary_pos < target_dim:  # Bounds check
-                        enriched[secondary_pos] = 0.6  # Secondary signal
+                        enriched[secondary_pos] = CONFIG.signal_strength_secondary  # Secondary signal
                     
                     # Add a third weak signal for robustness
-                    if i < 3:  # Only for first few features to avoid overcrowding
-                        tertiary_pos = (feature_idx * 53 + 13) % target_quarter
+                    if i < CONFIG.max_tertiary_features:  # Only for first few features to avoid overcrowding
+                        tertiary_pos = (feature_idx * CONFIG.hash_multiplier_tertiary + CONFIG.hash_offset_tertiary) % target_quarter
                         if tertiary_pos < target_dim:  # Bounds check
-                            enriched[tertiary_pos] = max(enriched[tertiary_pos], 0.3)
+                            enriched[tertiary_pos] = max(enriched[tertiary_pos], CONFIG.signal_strength_tertiary)
             else:
                 # Fallback to hash-based approach for smaller dimensions
                 feature_hash = hashlib.md5(str(sorted(active_features)).encode()).hexdigest()
-                for i in range(min(target_dim, 16)):
+                for i in range(min(target_dim, CONFIG.hash_fallback_max_dims)):
                     byte_val = int(feature_hash[i*2:(i+1)*2], 16)
-                    enriched[i] = (byte_val / 255.0) * 0.7
+                    enriched[i] = (byte_val / CONFIG.hash_byte_normalizer) * CONFIG.signal_strength_hash_fallback
         
         # Add sub-cluster information in remaining dimensions if we have space
-        remaining_start = target_dim - 16 if target_dim > 16 else 0
+        remaining_start = target_dim - CONFIG.remaining_dims_reserved if target_dim > CONFIG.remaining_dims_reserved else 0
         if remaining_start > 0 and remaining_start < target_dim:
             combo_hash = hashlib.md5(str(loc_combo).encode()).hexdigest()
             cluster_hash = hashlib.md5(f"{combo_hash}_{subcluster_id}".encode()).hexdigest()
             
             # Use n_subclusters to normalize the cluster influence
-            cluster_strength = 0.2 / max(1, n_subclusters)  # Weaker signal for more clusters
+            cluster_strength = CONFIG.cluster_strength_base / max(1, n_subclusters)  # Weaker signal for more clusters
             
             # Add normalized cluster ID as a direct feature
             if target_dim > remaining_start:
                 normalized_cluster_id = subcluster_id / max(1, n_subclusters - 1) if n_subclusters > 1 else 0
-                enriched[remaining_start] = normalized_cluster_id * 0.3  # Direct cluster signal
+                enriched[remaining_start] = normalized_cluster_id * CONFIG.cluster_signal_strength  # Direct cluster signal
             
-            for i in range(min(15, target_dim - remaining_start - 1)):  # -1 to account for direct cluster feature
+            for i in range(min(CONFIG.max_cluster_hash_dims, target_dim - remaining_start - 1)):  # -1 to account for direct cluster feature
                 byte_val = int(cluster_hash[i*2:(i+1)*2], 16)
-                enriched[remaining_start + 1 + i] = (byte_val / 255.0) * cluster_strength
+                enriched[remaining_start + 1 + i] = (byte_val / CONFIG.hash_byte_normalizer) * cluster_strength
         
         return enriched
     
@@ -272,29 +351,29 @@ class CulturallyAwareMovieEmbedding:
         active_features = np.where(loc_vec > 0)[0]
         
         if len(active_features) > 0:
-            if target_dim >= 64:
+            if target_dim >= CONFIG.large_dim_threshold:
                 # Use the same smarter mapping as above
                 target_half = max(1, target_dim // 2)  # Ensure at least 1
                 target_quarter = max(1, target_dim // 4)  # Ensure at least 1
                 
                 for i, feature_idx in enumerate(active_features):
-                    base_pos = (feature_idx * 17) % target_half
-                    enriched[base_pos] = 0.8
+                    base_pos = (feature_idx * CONFIG.hash_multiplier_primary) % target_half
+                    enriched[base_pos] = CONFIG.signal_strength_primary
                     
-                    secondary_pos = (feature_idx * 31 + 7) % target_half + target_half
+                    secondary_pos = (feature_idx * CONFIG.hash_multiplier_secondary + CONFIG.hash_offset_secondary) % target_half + target_half
                     if secondary_pos < target_dim:  # Bounds check
-                        enriched[secondary_pos] = 0.6
+                        enriched[secondary_pos] = CONFIG.signal_strength_secondary
                     
-                    if i < 3:
-                        tertiary_pos = (feature_idx * 53 + 13) % target_quarter
+                    if i < CONFIG.max_tertiary_features:
+                        tertiary_pos = (feature_idx * CONFIG.hash_multiplier_tertiary + CONFIG.hash_offset_tertiary) % target_quarter
                         if tertiary_pos < target_dim:  # Bounds check
-                            enriched[tertiary_pos] = max(enriched[tertiary_pos], 0.3)
+                            enriched[tertiary_pos] = max(enriched[tertiary_pos], CONFIG.signal_strength_tertiary)
             else:
                 # Fallback to hash-based approach
                 feature_hash = hashlib.md5(str(sorted(active_features)).encode()).hexdigest()
-                for i in range(min(target_dim, 16)):
+                for i in range(min(target_dim, CONFIG.hash_fallback_max_dims)):
                     byte_val = int(feature_hash[i*2:(i+1)*2], 16)
-                    enriched[i] = (byte_val / 255.0) * 0.7
+                    enriched[i] = (byte_val / CONFIG.hash_byte_normalizer) * CONFIG.signal_strength_hash_fallback
         
         return enriched
     
@@ -323,15 +402,15 @@ class CulturallyAwareMovieEmbedding:
         sn_votes = np.nan_to_num(sn_votes, nan=0.0)
         
         # Add small epsilon to avoid log(0)
-        sn_votes_safe = sn_votes + 1e-6
+        sn_votes_safe = sn_votes + CONFIG.popularity_epsilon
         
         # Apply log scaling to compress the exponential range
-        log_popularity = np.log10(sn_votes_safe * 1000 + 1)  # Scale up before log for better range
+        log_popularity = np.log10(sn_votes_safe * CONFIG.popularity_log_scale + CONFIG.popularity_log_offset)  # Scale up before log for better range
         
         # Add exponential boost for high-popularity movies (> 0.1 sn_votes)
-        high_popularity_mask = sn_votes > 0.1
+        high_popularity_mask = sn_votes > CONFIG.popularity_high_threshold
         exponential_boost = np.zeros_like(sn_votes)
-        exponential_boost[high_popularity_mask] = np.power(sn_votes[high_popularity_mask], 1.5)
+        exponential_boost[high_popularity_mask] = np.power(sn_votes[high_popularity_mask], CONFIG.popularity_exponential_power)
         
         # Combine log scaling with exponential boost
         popularity_boost = log_popularity + exponential_boost
@@ -341,9 +420,9 @@ class CulturallyAwareMovieEmbedding:
         boost_max = popularity_boost.max()
         boost_range = boost_max - boost_min
         
-        if boost_range > 1e-10:  # Avoid division by zero
+        if boost_range > CONFIG.popularity_zero_threshold:  # Avoid division by zero
             popularity_boost = (popularity_boost - boost_min) / boost_range
-            popularity_boost = popularity_boost * 1.99 + 0.01  # Scale to [0.01, 2.0]
+            popularity_boost = popularity_boost * CONFIG.popularity_boost_range + CONFIG.popularity_boost_min  # Scale to [0.01, 2.0]
         else:
             # All values are the same - use neutral boost
             logger.warning("All popularity values are identical - using neutral boost of 1.0")
@@ -354,13 +433,13 @@ class CulturallyAwareMovieEmbedding:
         logger.info(f"Mean boost: {popularity_boost.mean():.3f}")
         
         # Show some examples of the transformation
-        high_pop_indices = np.where(sn_votes > 0.1)[0][:5]
+        high_pop_indices = np.where(sn_votes > CONFIG.popularity_high_threshold)[0][:5]
         if len(high_pop_indices) > 0:
             logger.info("High popularity examples:")
             for idx in high_pop_indices:
                 logger.info(f"  sn_votes: {sn_votes[idx]:.3f} -> boost: {popularity_boost[idx]:.3f}")
         
-        low_pop_indices = np.where(sn_votes < 0.01)[0][:5]
+        low_pop_indices = np.where(sn_votes < CONFIG.popularity_boost_min)[0][:5]
         if len(low_pop_indices) > 0:
             logger.info("Low popularity examples:")
             for idx in low_pop_indices:
@@ -368,126 +447,9 @@ class CulturallyAwareMovieEmbedding:
         
         return popularity_boost.reshape(-1, 1)  # Column vector
     
-    def fit_transform(self, movies_df, plot_embeddings, genre_embeddings):
-        """
-        Fit the model and transform all data into culturally-aware embeddings.
-        
-        Args:
-            movies_df: DataFrame with movie metadata
-            plot_embeddings: Pre-computed plot embeddings from embedding.py
-            genre_embeddings: Pre-computed enriched genre embeddings from embedding.py
-        """
-        logger.info("Fitting culturally-aware embedding model...")
-        
-        # Validate inputs
-        if len(movies_df) == 0:
-            raise ValueError("Empty movies dataframe")
-        if plot_embeddings.shape[0] == 0:
-            raise ValueError("Empty plot embeddings")
-        if genre_embeddings.shape[0] == 0:
-            raise ValueError("Empty genre embeddings")
-            
-        # Build localization vocabularies
-        self.build_localization_vocabularies(movies_df)
-        
-        # Store plot and genre embeddings for query processing
-        # This enables semantic genre inference for queries
-        if plot_embeddings.shape[1] < self.plot_dim:
-            logger.warning(f"Plot embeddings dimension ({plot_embeddings.shape[1]}) is smaller than expected ({self.plot_dim})")
-        if genre_embeddings.shape[1] < self.genre_dim:
-            logger.warning(f"Genre embeddings dimension ({genre_embeddings.shape[1]}) is smaller than expected ({self.genre_dim})")
-            
-        self._stored_plot_embeddings = plot_embeddings[:, :self.plot_dim].astype(np.float32)
-        self._stored_genre_embeddings = genre_embeddings[:, :self.genre_dim].astype(np.float32)
-        
-        # Normalize stored embeddings for cosine similarity
-        faiss.normalize_L2(self._stored_plot_embeddings)
-        faiss.normalize_L2(self._stored_genre_embeddings)
-        
-        logger.info(f"Stored {len(self._stored_plot_embeddings)} plot embeddings for query processing")
-        logger.info(f"Stored {len(self._stored_genre_embeddings)} genre embeddings for query processing")
-        
-        # Create enriched localization embeddings
-        localization_embeddings = self._create_localization_enriched_embeddings(
-            movies_df, plot_embeddings, self.localization_dim
-        )
-        
-        # Create popularity boost vector
-        popularity_boost = self.create_popularity_boost_vector(movies_df)
-        
-        # Ensure all embeddings are the same length
-        n_movies = len(movies_df)
-        assert plot_embeddings.shape[0] == n_movies, f"Plot embeddings mismatch: {plot_embeddings.shape[0]} vs {n_movies}"
-        assert genre_embeddings.shape[0] == n_movies, f"Genre embeddings mismatch: {genre_embeddings.shape[0]} vs {n_movies}"
-        assert localization_embeddings.shape[0] == n_movies, f"Localization embeddings mismatch: {localization_embeddings.shape[0]} vs {n_movies}"
-        assert popularity_boost.shape[0] == n_movies, f"Popularity boost mismatch: {popularity_boost.shape[0]} vs {n_movies}"
-        
-        # Ensure proper dimensions
-        plot_embeddings = plot_embeddings[:, :self.plot_dim]  # Truncate if needed
-        genre_embeddings = genre_embeddings[:, :self.genre_dim]  # Truncate if needed
-        
-        # Combine all embeddings with weights
-        logger.info("Combining embeddings with cultural awareness...")
-        combined_embeddings = np.hstack([
-            plot_embeddings * self.plot_weight,
-            genre_embeddings * self.genre_weight,
-            localization_embeddings * self.localization_weight,
-            popularity_boost * self.popularity_weight
-        ])
-        
-        # Normalize final embeddings
-        combined_embeddings = combined_embeddings.astype(np.float32)
-        faiss.normalize_L2(combined_embeddings)
-        
-        logger.info(f"Final culturally-aware embedding shape: {combined_embeddings.shape}")
-        
-        return combined_embeddings
+
     
-    def transform_query(self, query_text, user_countries=None, user_languages=None, prefer_popular=True):
-        """
-        Transform a query into the same embedding space with cultural preferences.
-        
-        Args:
-            query_text: The search query
-            user_countries: List of preferred countries (e.g., ['USA', 'UK'])  
-            user_languages: List of preferred languages (e.g., ['English', 'Spanish'])
-            prefer_popular: If True, bias towards popular movies (default: True)
-        """
-        # Get plot embedding
-        try:
-            model = SentenceTransformer("intfloat/multilingual-e5-large")
-            plot_embedding = model.encode([f"passage: {query_text}"], convert_to_numpy=True)
-            plot_embedding = plot_embedding[:, :self.plot_dim]  # Ensure correct dimension
-        except Exception as e:
-            logger.error(f"Failed to create plot embedding: {e}")
-            # Fallback to zero embedding
-            plot_embedding = np.zeros((1, self.plot_dim), dtype=np.float32)
-        
-        # Create semantic genre embedding for the query
-        genre_embedding = self._create_query_genre_embedding(query_text, plot_embedding)
-        
-        # Create localization embedding based on user preferences
-        localization_embedding = self._create_query_localization_vector(user_countries, user_languages)
-        
-        # Create popularity preference (if prefer_popular, set high boost)
-        # Use the same scaling as the training data for consistency
-        if prefer_popular:
-            popularity_value = 1.5  # High boost = prefer popular movies (upper range)
-        else:
-            popularity_value = 0.5  # Low boost = neutral towards popularity (lower range)
-        
-        popularity_vector = np.array([[popularity_value]], dtype=np.float32)
-        
-        # Combine with weights
-        query_embedding = np.hstack([
-            plot_embedding * self.plot_weight,
-            genre_embedding * self.genre_weight,
-            localization_embedding * self.localization_weight,
-            popularity_vector * self.popularity_weight
-        ]).astype(np.float32)
-        
-        faiss.normalize_L2(query_embedding)
-        return query_embedding
+
     
     def _create_query_localization_vector(self, user_countries, user_languages):
         """Create localization vector for query based on user preferences"""
@@ -515,12 +477,12 @@ class CulturallyAwareMovieEmbedding:
             
             for country in common_countries:
                 if country in self.country_vocab:
-                    localization_vec[self.country_vocab[country]] = 0.5
+                    localization_vec[self.country_vocab[country]] = CONFIG.query_localization_fallback
             
             language_offset = len(self.country_vocab)
             for language in common_languages:
                 if language in self.language_vocab:
-                    localization_vec[language_offset + self.language_vocab[language]] = 0.5
+                    localization_vec[language_offset + self.language_vocab[language]] = CONFIG.query_localization_fallback
         
         # Reduce to target dimension using the same method as movie vectors
         query_localization = self._create_single_localization_vector(localization_vec, self.localization_dim)
@@ -608,11 +570,11 @@ class CulturallyAwareMovieEmbedding:
             return np.zeros((1, self.genre_dim), dtype=np.float32)
         
         # Get top 20 most similar movies
-        top_indices = np.argsort(similarities)[-20:]
+        top_indices = np.argsort(similarities)[-CONFIG.semantic_top_k:]
         top_similarities = similarities[top_indices]
         
         # Weight the similarities (softmax-like)
-        weights = np.exp(top_similarities * 3)  # Amplify differences
+        weights = np.exp(top_similarities * CONFIG.semantic_weight_amplifier)  # Amplify differences
         weights = weights / weights.sum()
         
         # Create weighted average of genre embeddings
@@ -626,83 +588,57 @@ class CulturallyAwareMovieEmbedding:
         return weighted_genre_embedding.reshape(1, -1)
     
     def save_model(self, path):
-        """Save the fitted model components"""
+        """Save the fitted model metadata (vocabularies and dimensions)"""
         model_data = {
             'country_vocab': self.country_vocab,
             'language_vocab': self.language_vocab,
-            'plot_weight': self.plot_weight,
-            'genre_weight': self.genre_weight,
-            'localization_weight': self.localization_weight,
-            'popularity_weight': self.popularity_weight,
             'plot_dim': self.plot_dim,
             'genre_dim': self.genre_dim,
-            'localization_dim': self.localization_dim,
-            'final_dim': self.final_dim
+            'localization_dim': self.localization_dim
         }
         
-        # Save metadata
-        metadata_path = path.replace('.npz', '_metadata.json')
-        with open(metadata_path, 'w') as f:
+        # Save metadata to the specified path (should be .json)
+        with open(path, 'w') as f:
             json.dump(model_data, f, indent=2)
         
-        # Save stored embeddings for query processing
-        embeddings_path = path.replace('.json', '.npz')
-        if hasattr(self, '_stored_plot_embeddings') and hasattr(self, '_stored_genre_embeddings'):
-            np.savez_compressed(embeddings_path,
-                              plot_embeddings=self._stored_plot_embeddings,
-                              genre_embeddings=self._stored_genre_embeddings)
-            logger.info(f"Stored embeddings saved to {embeddings_path}")
-        
-        logger.info(f"Culturally-aware model saved to {metadata_path}")
+        logger.info(f"Culturally-aware model metadata saved to {path}")
 
     def load_model(self, path):
-        """Load the fitted model components"""
-        # Load metadata
-        metadata_path = path.replace('.npz', '_metadata.json')
-        with open(metadata_path, 'r') as f:
+        """Load the fitted model metadata (vocabularies and dimensions)"""
+        # Load metadata from the specified path (should be .json)
+        with open(path, 'r') as f:
             model_data = json.load(f)
         
         # Restore attributes
         self.country_vocab = model_data['country_vocab']
         self.language_vocab = model_data['language_vocab']
-        self.plot_weight = model_data['plot_weight']
-        self.genre_weight = model_data['genre_weight']
-        self.localization_weight = model_data['localization_weight']
-        self.popularity_weight = model_data['popularity_weight']
         self.plot_dim = model_data['plot_dim']
         self.genre_dim = model_data['genre_dim']
         self.localization_dim = model_data['localization_dim']
-        self.final_dim = model_data['final_dim']
         
-        # Load stored embeddings for query processing
-        embeddings_path = path.replace('.json', '.npz')
-        try:
-            embeddings_data = np.load(embeddings_path)
-            self._stored_plot_embeddings = embeddings_data['plot_embeddings']
-            self._stored_genre_embeddings = embeddings_data['genre_embeddings']
-            logger.info(f"Loaded stored embeddings from {embeddings_path}")
-            logger.info(f"Plot embeddings: {self._stored_plot_embeddings.shape}")
-            logger.info(f"Genre embeddings: {self._stored_genre_embeddings.shape}")
-        except FileNotFoundError:
-            logger.warning(f"No stored embeddings found at {embeddings_path}")
-            self._stored_plot_embeddings = None
-            self._stored_genre_embeddings = None
+        # Backwards compatibility: ignore old weight fields if present
+        if any(key in model_data for key in ['plot_weight', 'genre_weight', 'localization_weight', 'popularity_weight']):
+            logger.info("Loaded model file with legacy weight fields (ignored - weights now handled at runtime)")
         
-        logger.info(f"Culturally-aware model loaded from {metadata_path}")
+        logger.info(f"Culturally-aware model metadata loaded from {path}")
+        logger.info("Ready for component creation and query processing with runtime weighted search.")
     
     def create_separate_components(self, movies_df, plot_embeddings, genre_embeddings, output_path: str = "datasets/dist/embedding_components.npz"):
         """
-        Create separate embedding components for runtime weighted search
+        Create and save separate embedding components for runtime weighted search
         
-        This method creates and saves individual embedding components (plot, genre, 
-        localization, popularity) that can be combined with different weights at runtime
+        This is the main method for creating the .npz file with individual embedding components
+        (plot, genre, localization, popularity) that can be combined with different weights at runtime
         by the RuntimeWeightedSearch system.
         
         Args:
             movies_df: DataFrame with movie metadata
             plot_embeddings: Pre-computed plot embeddings from embedding.py
             genre_embeddings: Pre-computed enriched genre embeddings from embedding.py
-            output_path: Path to save the components file
+            output_path: Path to save the components file (.npz)
+            
+        Returns:
+            Path: The output path where components were saved
         """
         logger.info("Creating separate embedding components for runtime weighted search...")
         
@@ -730,9 +666,16 @@ class CulturallyAwareMovieEmbedding:
         popularity_vectors = self.create_popularity_boost_vector(movies_df)
         
         # Normalize each component independently for runtime combination
-        faiss.normalize_L2(plot_embeddings_comp)
-        faiss.normalize_L2(genre_embeddings_comp)
-        faiss.normalize_L2(localization_embeddings)
+        # L2 normalize using numpy (equivalent to faiss.normalize_L2)
+        norms = np.linalg.norm(plot_embeddings_comp, axis=1, keepdims=True)
+        plot_embeddings_comp = plot_embeddings_comp / np.maximum(norms, 1e-12)  # Avoid division by zero
+        
+        norms = np.linalg.norm(genre_embeddings_comp, axis=1, keepdims=True)
+        genre_embeddings_comp = genre_embeddings_comp / np.maximum(norms, 1e-12)
+        
+        norms = np.linalg.norm(localization_embeddings, axis=1, keepdims=True)
+        localization_embeddings = localization_embeddings / np.maximum(norms, 1e-12)
+        
         # Note: popularity vectors are intentionally not normalized to preserve magnitude differences
         
         # Ensure all components have the same number of movies
@@ -764,9 +707,11 @@ class CulturallyAwareMovieEmbedding:
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description='Generate culturally-aware movie embeddings')
-    parser.add_argument('--skip-components', action='store_true',
-                      help='Skip creating separate components for runtime weighted search')
+    parser = argparse.ArgumentParser(description='Generate culturally-aware movie embedding components')
+    parser.add_argument('--output', '-o', type=str, default='datasets/dist/culturally_aware_model',
+                      help='Base output path (without extension). Will create .json and .npz files (default: datasets/dist/culturally_aware_model)')
+    parser.add_argument('--genre-dim', '-g', type=int, default=128,
+                      help='Dimension for enriched genre embeddings (default: 128)')
     parser.add_argument('--localization-dim', type=int, default=128,
                       help='Dimension for localization embeddings (default: 128)')
     args = parser.parse_args()
@@ -796,74 +741,32 @@ if __name__ == "__main__":
     # Create culturally-aware embedding system
     ca_embedding = CulturallyAwareMovieEmbedding(
         plot_dim=1024,                  # Full plot embedding dimension
-        genre_dim=64,                   # Enriched genre embedding dimension
-        localization_dim=args.localization_dim,  # Country/language embedding dimension (configurable)
-        plot_weight=0.50,               # Primary semantic signal
-        genre_weight=0.25,              # Thematic relevance
-        localization_weight=0.05,       # Cultural relevance
-        popularity_weight=0.20          # Popularity boost (high weight, high impact)
+        genre_dim=args.genre_dim,       # Enriched genre embedding dimension
+        localization_dim=args.localization_dim  # Country/language embedding dimension (configurable)
     )
     
-    # Fit and transform
-    logger.info("Creating culturally-aware embeddings...")
-    combined_embeddings = ca_embedding.fit_transform(movies_df, plot_embeddings, genre_embeddings)
+    # Generate output paths from base path
+    base_path = args.output
+    metadata_path = f"{base_path}.json"
+    components_path = f"{base_path}.npz"
     
-    # Build FAISS index
-    logger.info("Building FAISS index...")
-    index = faiss.IndexFlatIP(combined_embeddings.shape[1])
-    index.add(combined_embeddings)
+    # Ensure output directory exists
+    output_dir = Path(base_path).parent
+    output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Save everything
-    faiss.write_index(index, "datasets/dist/culturally_aware_model.index")
-    ca_embedding.save_model("datasets/dist/culturally_aware_model.json")
+    # Create separate components for runtime weighted search
+    # This will build the vocabularies that we need for the metadata
+    logger.info("Creating separate components for runtime weighted search...")
+    ca_embedding.create_separate_components(
+        movies_df, plot_embeddings, genre_embeddings,
+        components_path
+    )
     
-    # Create separate components for runtime weighted search (unless skipped)
-    if not args.skip_components:
-        logger.info("Creating separate components for runtime weighted search...")
-        ca_embedding.create_separate_components(
-            movies_df, plot_embeddings, genre_embeddings,
-            "datasets/dist/culturally_aware_model.npz"
-        )
-    else:
-        logger.info("Skipped creating separate components (--skip-components specified)")
+    # Save model metadata (after vocabularies are built)
+    logger.info(f"Saving model metadata to: {metadata_path}")
+    ca_embedding.save_model(metadata_path)
     
-    logger.info(f"Culturally-aware index built with {index.ntotal} vectors of dimension {combined_embeddings.shape[1]}")
-    
-    # Test queries
-    test_queries = [
-        ("mafia crime family loyalty", None, None, True),
-        ("space adventure sci-fi", ['USA'], ['English'], True),
-        ("romantic comedy", ['France', 'Italy'], ['French', 'Italian'], False),
-        ("horror scary movie", None, None, True)
-    ]
-    
-    logger.info("\n" + "="*50)
-    logger.info("TESTING CULTURALLY-AWARE SEARCH")
-    logger.info("="*50)
-    
-    for query_text, countries, languages, prefer_popular in test_queries:
-        logger.info(f"\nQuery: '{query_text}'")
-        logger.info(f"Preferred countries: {countries}")
-        logger.info(f"Preferred languages: {languages}")  
-        logger.info(f"Prefer popular: {prefer_popular}")
-        
-        query_embedding = ca_embedding.transform_query(query_text, countries, languages, prefer_popular)
-        D, I = index.search(query_embedding, 10)
-        
-        logger.info(f"Top 10 results:")
-        for i, idx in enumerate(I[0]):
-            idx_int = int(idx)
-            if idx_int < len(movies_df):
-                title = movies_df["title"][idx_int]
-                rating = movies_df["final_rating"][idx_int]
-                votes = movies_df["votes"][idx_int]
-                sn_votes = movies_df["sn_votes"][idx_int]
-                countries_movie = movies_df["country"][idx_int]
-                languages_movie = movies_df["language"][idx_int]
-                
-                logger.info(f"{i+1}. {title}")
-                logger.info(f"    Rating: {rating:.2f}, Votes: {int(votes) if votes else 0} (norm: {sn_votes:.3f})")
-                logger.info(f"    Countries: {countries_movie.str.concat(', ')}")
-                logger.info(f"    Languages: {languages_movie.str.concat(', ')}")
-                logger.info(f"    Similarity: {D[0][i]:.4f}")
-        logger.info("-" * 30)
+    logger.info(f"Created files:")
+    logger.info(f"  Metadata: {metadata_path}")
+    logger.info(f"  Components: {components_path}")
+    logger.info(f"Culturally-aware embedding components ready for runtime weighted search with {len(movies_df)} movies")
