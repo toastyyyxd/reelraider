@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple
 from dataclasses import dataclass
 
-from datasets.utils import logger, read_parquet_file
+from datasets.utils import logger, read_parquet_file, tid_to_tconst
 from datasets.runtime_weighted_search import RuntimeWeightedSearch
 
 
@@ -31,6 +31,7 @@ from datasets.runtime_weighted_search import RuntimeWeightedSearch
 class SearchResult:
     """A single movie search result"""
     title: str
+    imdb_id: str
     year: int
     rating: float
     votes: int
@@ -49,7 +50,6 @@ class SearchRequest:
     query: str
     countries: Optional[List[str]] = None
     languages: Optional[List[str]] = None
-    prefer_popular: bool = True
     max_results: int = 20
     min_rating: Optional[float] = None
     min_votes: Optional[int] = None
@@ -109,7 +109,7 @@ class MovieQueryEngine:
         
         logger.info("Loaded runtime weighted search system")
     
-    def search(self, request: SearchRequest) -> List[SearchResult]:
+    def search(self, request: SearchRequest) -> pl.DataFrame:
         """
         Search for movies based on the request
         
@@ -117,16 +117,15 @@ class MovieQueryEngine:
             request: SearchRequest with query and preferences
             
         Returns:
-            List of SearchResult objects ranked by relevance
+            Polars DataFrame with search results and computed columns
         """
         logger.info(f"Searching for: '{request.query}'")
         
         # Use runtime weighted search for dynamic cultural tuning
-        raw_results = self.runtime_search.search(
+        raw_results: pl.DataFrame = self.runtime_search.search(
             query_text=request.query,
             user_countries=request.countries,
             user_languages=request.languages,
-            prefer_popular=request.prefer_popular,
             plot_weight=request.plot_weight,
             genre_weight=request.genre_weight,
             localization_weight=request.localization_weight,
@@ -134,61 +133,35 @@ class MovieQueryEngine:
             top_k=min(request.max_results * 2, 100)  # Get extra results for filtering
         )
         
-        # Convert to SearchResult format and apply filters
-        results = []
-        for raw_result in raw_results:
-            # Apply filters based on movie metadata
-            if not self._passes_filters_raw(raw_result, request):
-                continue
-            
-            result = SearchResult(
-                title=raw_result['title'],
-                year=raw_result['year'],
-                rating=raw_result['rating'],
-                votes=raw_result['votes'],
-                popularity_score=raw_result['popularity'],
-                countries=self._parse_list_field(raw_result['countries']),
-                languages=self._parse_list_field(raw_result['languages']),
-                genres=self._parse_list_field(raw_result['genres']),
-                plot=raw_result['plot'],
-                similarity=raw_result['similarity'],
-                rank=raw_result['rank']
-            )
-            
-            results.append(result)
-            
-            # Stop when we have enough results
-            if len(results) >= request.max_results:
-                break
+        # Apply filters using Polars operations
+        filtered_results = self._apply_filters(raw_results, request)
         
-        logger.info(f"Found {len(results)} results")
-        return results
+        # Limit to requested number of results
+        final_results = filtered_results.head(request.max_results)
+        
+        logger.info(f"Found {len(final_results)} results")
+        return final_results
     
-    def _passes_filters_raw(self, result: dict, request: SearchRequest) -> bool:
-        """Check if a raw search result passes the search filters"""
+    def _apply_filters(self, df: pl.DataFrame, request: SearchRequest) -> pl.DataFrame:
+        """Apply search filters using Polars operations"""
+        result = df
         
         # Rating filter
         if request.min_rating is not None:
-            rating = result.get('rating')
-            if rating is None or rating < request.min_rating:
-                return False
+            result = result.filter(pl.col("final_rating") >= request.min_rating)
         
         # Votes filter
         if request.min_votes is not None:
-            votes = result.get('votes')
-            if votes is None or votes < request.min_votes:
-                return False
+            result = result.filter(pl.col("votes") >= request.min_votes)
         
         # Year range filter
         if request.year_range is not None:
-            year = result.get('year')
-            if year is None:
-                return False
             min_year, max_year = request.year_range
-            if year < min_year or year > max_year:
-                return False
+            result = result.filter(
+                (pl.col("year") >= min_year) & (pl.col("year") <= max_year)
+            )
         
-        return True
+        return result
     
     def _parse_list_field(self, field_value) -> List[str]:
         """Parse a list field from the dataframe"""
@@ -206,23 +179,20 @@ class MovieQueryEngine:
         
         return [str(field_value)]
     
-    def search_simple(self, query: str, max_results: int = 10, 
-                     prefer_popular: bool = True) -> List[SearchResult]:
+    def search_simple(self, query: str, max_results: int = 10) -> pl.DataFrame:
         """
         Simple search interface for quick queries
         
         Args:
             query: Search query string
             max_results: Maximum number of results to return
-            prefer_popular: Whether to prefer popular movies
             
         Returns:
-            List of search results
+            Polars DataFrame with search results
         """
         request = SearchRequest(
             query=query,
-            max_results=max_results,
-            prefer_popular=prefer_popular
+            max_results=max_results
         )
         return self.search(request)
     
@@ -232,7 +202,7 @@ class MovieQueryEngine:
                                     plot_weight: float = 0.44,
                                     genre_weight: float = 0.13,
                                     localization_weight: float = 0.1,
-                                    popularity_weight: float = 0.33) -> List[SearchResult]:
+                                    popularity_weight: float = 0.33) -> pl.DataFrame:
         """
         Get movie recommendations based on a specific movie using culturally-aware search
         
@@ -246,7 +216,7 @@ class MovieQueryEngine:
             popularity_weight: Weight for popularity
             
         Returns:
-            List of similar movies using cultural awareness
+            Polars DataFrame with similar movies using cultural awareness
         """
         # Find the movie in our database
         movie_matches = self.movies_df.filter(
@@ -255,10 +225,11 @@ class MovieQueryEngine:
         
         if len(movie_matches) == 0:
             logger.warning(f"Movie '{movie_title}' not found")
-            return []
+            return pl.DataFrame()
         
         # Use the first match
         movie_row = movie_matches.row(0, named=True)
+        source_tid = movie_row['tid']  # Get the tid for reliable filtering
         
         # Extract cultural context from the source movie
         source_countries = self._parse_list_field(movie_row['country'])
@@ -272,7 +243,7 @@ class MovieQueryEngine:
         genre_text = " ".join(genres).lower()
         query = f"{genre_text} {plot_snippet}"
         
-        logger.info(f"Finding movies similar to '{movie_row['title']}' with cultural awareness")
+        logger.info(f"Finding movies similar to '{movie_row['title']}' (tid: {source_tid}) with cultural awareness")
         logger.info(f"Source movie context: countries={source_countries}, languages={source_languages}")
         
         if use_cultural_weights:
@@ -281,7 +252,6 @@ class MovieQueryEngine:
                 query=query,
                 countries=source_countries if source_countries else None,
                 languages=source_languages if source_languages else None,
-                prefer_popular=False,  # Focus on quality over popularity for recommendations
                 max_results=max_results + 1,  # Get extra to filter out the original
                 plot_weight=plot_weight,
                 genre_weight=genre_weight,
@@ -291,25 +261,18 @@ class MovieQueryEngine:
             
             results = self.search(request)
             
-            # Filter out the original movie from recommendations
-            filtered_results = []
-            original_title_lower = movie_row['title'].lower()
-            
-            for result in results:
-                # Skip if it's the same movie (case-insensitive title match)
-                if result.title.lower() == original_title_lower:
-                    continue
-                
-                filtered_results.append(result)
-                
-                # Stop when we have enough results
-                if len(filtered_results) >= max_results:
-                    break
+            # Filter out the original movie from recommendations using tid (more reliable)
+            filtered_results = results.filter(
+                pl.col("tid") != source_tid
+            ).head(max_results)
             
             return filtered_results
         else:
-            # Fall back to simple search
-            return self.search_simple(query, max_results + 1, prefer_popular=True)[1:]  # Skip the original movie
+            # Fall back to simple search and filter out original using tid
+            all_results = self.search_simple(query, max_results + 1)
+            return all_results.filter(
+                pl.col("tid") != source_tid
+            ).head(max_results)
     
     def get_movie_stats(self) -> Dict[str, Any]:
         """Get statistics about the movie database"""
@@ -347,8 +310,6 @@ def main():
                       help='Preferred countries (e.g. "USA" "UK")')
     parser.add_argument('--languages', nargs='+',
                       help='Preferred languages (e.g. "English" "Spanish")')
-    parser.add_argument('--no-popular', action='store_true',
-                      help='Do not prefer popular movies')
     parser.add_argument('--min-rating', type=float,
                       help='Minimum movie rating (0-10)')
     parser.add_argument('--min-votes', type=int,
@@ -379,34 +340,20 @@ def main():
     
     args = parser.parse_args()
     
-    # Apply preset configurations if specified (optimized for 128-dim localization)
+    # Apply preset configurations if specified (to be retuned for fixed embedding method)
     if args.preset:
         if args.preset == 'balanced':
-            # Default balanced preset - good for general queries with light cultural awareness
-            args.plot_weight, args.genre_weight = 0.5, 0.25
-            args.localization_weight, args.popularity_weight = 0.1, 0.15
-            args.no_popular = False  # prefer_popular = True
-        elif args.preset == 'popular':
-            # Mainstream preset - balances cultural awareness with popularity
-            args.plot_weight, args.genre_weight = 0.4, 0.2
-            args.localization_weight, args.popularity_weight = 0.2, 0.2
-            args.no_popular = False  # prefer_popular = True
+            # Default balanced preset - good for general queries with cultural awareness
+            args.plot_weight, args.genre_weight = 0.515, 0.215
+            args.localization_weight, args.popularity_weight = 0.05, 0.2
         elif args.preset == 'cultural':
-            # Cultural preset - emphasizes plot semantics while maintaining cultural relevance
-            args.plot_weight, args.genre_weight = 0.44, 0.13
-            args.localization_weight, args.popularity_weight = 0.1, 0.33
-            args.no_popular = True  # prefer_popular = False
+            # Cultural preset - emphasizes cultural relevance and plot semantics
+            args.plot_weight, args.genre_weight = 0.532, 0.1
+            args.localization_weight, args.popularity_weight = 0.16, 0.128
         elif args.preset == 'niche':
-            # Niche preset - emphasizes semantic/genre matching, finds hidden gems
-            args.plot_weight, args.genre_weight = 0.6, 0.3
+            # Niche preset - emphasizes semantic/genre matching, de-emphasizes popularity
+            args.plot_weight, args.genre_weight = 0.7, 0.2
             args.localization_weight, args.popularity_weight = 0.05, 0.05
-            args.no_popular = True  # prefer_popular = False
-        elif args.preset == 'ultra-cultural':
-            # DEPRECATED: Extreme cultural localization - essentially a country filter
-            # This preset bypasses semantic ML and is not recommended for general use
-            args.plot_weight, args.genre_weight = 0.15, 0.05
-            args.localization_weight, args.popularity_weight = 0.75, 0.05
-            args.no_popular = True  # prefer_popular = False
     
     # Initialize query engine
     try:
@@ -465,7 +412,6 @@ def main():
         query=args.query,
         countries=args.countries,
         languages=args.languages,
-        prefer_popular=not args.no_popular,
         max_results=args.max_results,
         min_rating=args.min_rating,
         min_votes=args.min_votes,
@@ -485,7 +431,6 @@ def main():
         print(f"Preferred countries: {', '.join(args.countries)}")
     if args.languages:
         print(f"Preferred languages: {', '.join(args.languages)}")
-    print(f"Prefer popular: {request.prefer_popular}")
     print(f"Weights: plot={args.plot_weight:.2f}, genre={args.genre_weight:.2f}, "
           f"localization={args.localization_weight:.2f}, popularity={args.popularity_weight:.2f}")
     if args.preset:
@@ -497,26 +442,48 @@ def main():
     return 0
 
 
-def _print_results(results: List[SearchResult]):
+def _print_results(results: pl.DataFrame):
     """Print search results in a nice format"""
-    if not results:
+    if len(results) == 0:
         print("No results found.")
         return
     
-    for result in results:
-        print(f"{result.rank}. {result.title} ({result.year})")
-        print(f"   Rating: {result.rating:.1f}/10, Votes: {result.votes:,}, Popularity: {result.popularity_score:.3f}")
-        print(f"   Genres: {', '.join(result.genres)}")
-        print(f"   Countries: {', '.join(result.countries)}")
-        print(f"   Languages: {', '.join(result.languages)}")
-        print(f"   Similarity: {result.similarity:.4f}")
+    for row in results.iter_rows(named=True):
+        # Parse list fields for display
+        countries = _parse_list_field_for_display(row['country'])
+        languages = _parse_list_field_for_display(row['language'])
+        genres = _parse_list_field_for_display(row['genre'])
+        
+        print(f"{row['rank']}. {row['title']} ({row['year']})")
+        print(f"   Rating: {row['final_rating']:.1f}/10, Votes: {row['votes']:,}, Popularity: {row['sn_votes']:.3f}")
+        print(f"   Genres: {', '.join(genres)}")
+        print(f"   Countries: {', '.join(countries)}")
+        print(f"   Languages: {', '.join(languages)}")
+        print(f"   Similarity: {row['similarity']:.4f}")
         
         # Show plot summary (first 150 chars)
-        if result.plot:
-            plot_summary = result.plot[:150] + "..." if len(result.plot) > 150 else result.plot
+        if row['plot']:
+            plot_summary = row['plot'][:150] + "..." if len(row['plot']) > 150 else row['plot']
             print(f"   Plot: {plot_summary}")
         
         print()
+
+
+def _parse_list_field_for_display(field_value) -> List[str]:
+    """Parse a list field for display purposes"""
+    if field_value is None:
+        return []
+    
+    if isinstance(field_value, list):
+        return [str(item) for item in field_value if item]
+    
+    if isinstance(field_value, str):
+        if field_value.strip() == "":
+            return []
+        # Handle comma-separated strings
+        return [item.strip() for item in field_value.split(',') if item.strip()]
+    
+    return [str(field_value)]
 
 
 if __name__ == "__main__":

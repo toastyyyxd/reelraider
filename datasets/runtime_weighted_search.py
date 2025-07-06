@@ -57,14 +57,19 @@ class RuntimeWeightedSearch:
         self.movies_df = self.movies_df.filter(pl.col("plot") != "").sort("tid")
         
         # Load embedding model for query processing
-        # Get the localization dimension from the loaded components
+        # Get dimensions from the loaded components
         localization_dim = self.localization_embeddings.shape[1]
+        genre_dim = self.genre_embeddings.shape[1] 
         self.embedding_model = CulturallyAwareMovieEmbedding(
             plot_dim=1024, 
-            genre_dim=64, 
+            genre_dim=genre_dim, 
             localization_dim=localization_dim
         )
         self.embedding_model.load_model("datasets/dist/culturally_aware_model.json")
+        
+        # Set the stored embeddings needed for semantic genre embedding creation
+        self.embedding_model._stored_genre_embeddings = self.genre_embeddings
+        self.embedding_model._stored_plot_embeddings = self.plot_embeddings
         
         # Load sentence transformer for query embeddings
         self.sentence_model = SentenceTransformer("intfloat/multilingual-e5-large")
@@ -106,7 +111,7 @@ class RuntimeWeightedSearch:
         return combined
     
     def create_query_embedding(self, query_text: str, user_countries: Optional[List[str]] = None,
-                             user_languages: Optional[List[str]] = None, prefer_popular: bool = True,
+                             user_languages: Optional[List[str]] = None,
                              plot_weight: float = 0.5, genre_weight: float = 0.25,
                              localization_weight: float = 0.05, popularity_weight: float = 0.2) -> np.ndarray:
         """Create query embedding with the same weights as the movie embeddings"""
@@ -117,20 +122,15 @@ class RuntimeWeightedSearch:
         
         # Create semantic genre embedding for the query
         genre_embedding = self.embedding_model._create_query_genre_embedding(query_text, plot_embedding)
-        genre_embedding = genre_embedding[:, :64]  # Ensure correct dimension
+        genre_embedding = genre_embedding[:, :self.embedding_model.genre_dim]  # Ensure correct dimension
         
         # Create localization embedding based on user preferences
         localization_embedding = self.embedding_model._create_query_localization_vector(user_countries, user_languages)
         # Use the correct localization dimension from the embedding model
         localization_embedding = localization_embedding[:, :self.embedding_model.localization_dim]
         
-        # Create popularity preference
-        if prefer_popular:
-            popularity_value = 1.5  # High boost = prefer popular movies
-        else:
-            popularity_value = 0.5  # Low boost = neutral towards popularity
-        
-        popularity_vector = np.array([[popularity_value]], dtype=np.float32)
+        # Fixed popularity preference to bias toward popular movies (avoids embedding space distortion)
+        popularity_vector = np.array([[1.5]], dtype=np.float32)
         
         # Combine with the same weights as the movie embeddings
         query_embedding = np.hstack([
@@ -144,10 +144,10 @@ class RuntimeWeightedSearch:
         return query_embedding
     
     def search(self, query_text: str, user_countries: Optional[List[str]] = None,
-              user_languages: Optional[List[str]] = None, prefer_popular: bool = True,
+              user_languages: Optional[List[str]] = None,
               plot_weight: float = 0.5, genre_weight: float = 0.25,
               localization_weight: float = 0.05, popularity_weight: float = 0.2,
-              top_k: int = 10) -> List[dict]:
+              top_k: int = 10) -> pl.DataFrame:
         """
         Search for movies with runtime-adjustable cultural weights
         
@@ -155,11 +155,10 @@ class RuntimeWeightedSearch:
             query_text: Search query
             user_countries: Preferred countries for cultural relevance
             user_languages: Preferred languages for cultural relevance  
-            prefer_popular: Whether to boost popular movies
             plot_weight: Weight for semantic plot similarity
             genre_weight: Weight for genre/thematic similarity
             localization_weight: Weight for cultural/regional relevance
-            popularity_weight: Weight for popularity/iconicity boost
+            popularity_weight: Weight for popularity/iconicity boost (set to 0 to ignore popularity)
             top_k: Number of results to return
         """
         
@@ -174,41 +173,47 @@ class RuntimeWeightedSearch:
         
         # Create query embedding with same weights
         query_embedding = self.create_query_embedding(
-            query_text, user_countries, user_languages, prefer_popular,
+            query_text, user_countries, user_languages,
             plot_weight, genre_weight, localization_weight, popularity_weight
         )
         
         # Search
         D, I = index.search(query_embedding, top_k)
         
-        # Format results
-        results = []
-        for i, idx in enumerate(I[0]):
-            idx_int = int(idx)
-            if idx_int < len(self.movies_df):
-                movie_row = self.movies_df.row(idx_int, named=True)
-                
-                # Check if it's from preferred countries
-                is_cultural_match = False
-                if user_countries and movie_row["country"]:
-                    is_cultural_match = any(country in movie_row["country"] for country in user_countries)
-                
-                results.append({
-                    "rank": i + 1,
-                    "title": movie_row["title"],
-                    "year": movie_row["year"],
-                    "rating": movie_row["final_rating"],
-                    "votes": movie_row["votes"],
-                    "popularity": movie_row["sn_votes"],
-                    "genres": movie_row["genre"],
-                    "countries": movie_row["country"],
-                    "languages": movie_row["language"],
-                    "similarity": float(D[0][i]),
-                    "cultural_match": is_cultural_match,
-                    "plot": movie_row["plot"]
-                })
+        # Format results using Polars operations for efficiency
+        result_indices = I[0]
+        similarities = D[0]
         
-        return results
+        # Filter valid indices
+        valid_mask = result_indices < len(self.movies_df)
+        valid_indices = result_indices[valid_mask]
+        valid_similarities = similarities[valid_mask]
+        
+        if len(valid_indices) == 0:
+            return pl.DataFrame()
+        
+        # Get the result movies as a DataFrame slice
+        result_movies = self.movies_df[valid_indices]
+        
+        # Add computed columns
+        result_movies = result_movies.with_columns([
+            pl.Series("rank", range(1, len(valid_indices) + 1)),
+            pl.Series("similarity", valid_similarities.astype(np.float32))
+        ])
+        
+        # Add cultural match column
+        if user_countries:
+            # Use list operations since country is a List(Categorical) column
+            cultural_match_expr = pl.col("country").list.eval(
+                pl.element().is_in(user_countries)
+            ).list.any().fill_null(False)
+        else:
+            cultural_match_expr = pl.lit(False)
+        result_movies = result_movies.with_columns([
+            cultural_match_expr.alias("cultural_match")
+        ])
+        
+        return result_movies
 
 def test_runtime_weighting():
     """Test the runtime weighting system with Hong Kong queries"""
@@ -273,7 +278,6 @@ def test_runtime_weighting():
         
         results = search_system.search(
             query, countries, languages,
-            prefer_popular=config['prefer_popular'],
             plot_weight=config['plot_weight'],
             genre_weight=config['genre_weight'], 
             localization_weight=config['localization_weight'],
@@ -282,17 +286,17 @@ def test_runtime_weighting():
         )
         
         hk_count = 0
-        for result in results:
-            is_hk = result['cultural_match']
+        for row in results.iter_rows(named=True):
+            is_hk = row['cultural_match']
             if is_hk:
                 hk_count += 1
                 mark = "🇭🇰"
             else:
                 mark = "  "
             
-            logger.info(f"{result['rank']:2d}. {mark} {result['title']} ({result['year']})")
-            logger.info(f"     Countries: {result['countries']}")
-            logger.info(f"     Pop: {result['popularity']:.3f}, Sim: {result['similarity']:.4f}")
+            logger.info(f"{row['rank']:2d}. {mark} {row['title']} ({row['year']})")
+            logger.info(f"     Countries: {row['country']}")
+            logger.info(f"     Pop: {row['sn_votes']:.3f}, Sim: {row['similarity']:.4f}")
         
         logger.info(f"\nHong Kong movies in top 10: {hk_count}/10")
 

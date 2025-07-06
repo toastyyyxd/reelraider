@@ -5,7 +5,6 @@ import time
 import asyncio
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-
 import polars as pl
 from polars import DataFrame
 import numpy as np
@@ -13,7 +12,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from tqdm.asyncio import tqdm as tqdm_asyncio
 
-from datasets.utils import logger, read_parquet_file, write_parquet_file, CheckpointManager
+from datasets.utils import logger, read_parquet_file, write_parquet_file, CheckpointManager, tid_to_tconst
 
 
 class OmdbAggregator:
@@ -114,7 +113,7 @@ class OmdbAggregator:
     )
     async def fetch_one(self, tid: np.uint32, client: httpx.AsyncClient):
         """Fetch OMDB data for a single IMDb ID, respecting self-imposed rate limit if set."""
-        imdb_id = f"tt{str(tid).zfill(7)}"
+        imdb_id = tid_to_tconst(tid)
         async with self.semaphore:
             # Self-imposed rate limit (if enabled)
             if self.max_rps:

@@ -4,6 +4,7 @@ import logging
 import coloredlogs
 from pathlib import Path
 from tqdm import tqdm
+from numpy import uint32
 
 
 logger = logging.getLogger("reelraider.datasets")
@@ -13,6 +14,9 @@ coloredlogs.install(
     fmt='[%(asctime)s] %(levelname)s: %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
+
+def tid_to_tconst(tid: uint32) -> str:
+    return f"tt{str(tid).zfill(7)}"
 
 def read_csv_file(path: Path, lazy: bool = False) -> pl.LazyFrame | pl.DataFrame:
     """
