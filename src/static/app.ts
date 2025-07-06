@@ -114,12 +114,38 @@ async function toggleSearchMode() {
     locationText.textContent = `Switched to ${newSearchType} search!`;
     
     // Update the display after animation
-    setTimeout(() => {
+    setTimeout(async () => {
         locationIndicator.classList.remove('toggling');
         updateLocationDisplay();
+        
+        // Automatically refetch current results with new search mode
+        await refetchCurrentResults();
     }, 600);
     
     console.log(`Search mode toggled to: ${newSearchType}`);
+}
+
+async function refetchCurrentResults() {
+    try {
+        // Determine what type of results we're currently showing
+        if (currentRecommendationId) {
+            // We're showing recommendations - refetch them
+            console.log('Refetching recommendations with new search mode for:', currentRecommendationId);
+            showLoadingState(true);
+            await getRecommendations(currentRecommendationId, true);
+        } else if (currentSearchQuery) {
+            // We're showing search results - refetch them
+            console.log('Refetching search results with new search mode for:', currentSearchQuery);
+            showLoadingState(true);
+            await performSearch(currentSearchQuery, true);
+        } else {
+            // No current results to refetch
+            console.log('No current results to refetch');
+        }
+    } catch (error) {
+        console.error('Failed to refetch results:', error);
+        showErrorState('Failed to refetch results with new search mode');
+    }
 }
 
 async function refreshUserLocation() {
@@ -205,11 +231,17 @@ function setupSearchFunctionality() {
     });
 }
 
-async function performSearch(query: string) {
+async function performSearch(query: string, skipLoadingState = false) {
     console.log('Searching for:', query);
     
+    // Track current search state
+    currentSearchQuery = query;
+    currentRecommendationId = null;
+    
     try {
-        showLoadingState();
+        if (!skipLoadingState) {
+            showLoadingState();
+        }
         
         // Prepare search options with user location and language
         const options: any = {
@@ -246,13 +278,14 @@ async function performSearch(query: string) {
     }
 }
 
-function showLoadingState() {
+function showLoadingState(isRefetch = false) {
     const galleryGrid = document.querySelector('.gallery-grid');
     if (galleryGrid) {
+        const message = isRefetch ? 'Updating results with new search mode...' : 'Searching movies...';
         galleryGrid.innerHTML = `
             <div class="loading-state">
                 <i class="fas fa-spinner fa-spin"></i>
-                <p>Searching movies...</p>
+                <p>${message}</p>
             </div>
         `;
     }
@@ -275,6 +308,10 @@ function clearSearchResults() {
     if (galleryGrid) {
         galleryGrid.innerHTML = '<div class="no-results">Start typing to search for movies...</div>';
     }
+    
+    // Clear current state when results are cleared
+    currentSearchQuery = null;
+    currentRecommendationId = null;
 }
 
 function displaySearchResults(results: MovieResult[]) {
@@ -300,12 +337,12 @@ function createMovieCard(movie: MovieResult): string {
     const countries = movie.countries.slice(0, 2).join(', ');
     
     return `
-        <div class="movie-card" data-imdb-id="${movie.imdb_id}">
+        <div class="movie-card" data-imdb-id="${movie.imdb_id}" data-movie='${JSON.stringify(movie).replace(/'/g, '&#39;')}'>
             <div class="movie-poster" style="background-image: url('${posterUrl}')">
                 <div class="movie-title">${movie.title}</div>
                 <div class="movie-year">${movie.year}</div>
                 <div class="movie-overlay">
-                    <button class="btn-recommend" title="Get recommendations">
+                    <button class="btn-recommend" title="Get recommendations" onclick="event.stopPropagation();">
                         <i class="fas fa-magic"></i>
                     </button>
                 </div>
@@ -345,17 +382,36 @@ function createStarRating(rating: number): string {
 }
 
 function setupMovieCardInteractions() {
-    // Add hover effects to movie cards
+    // Add hover effects and click handlers to movie cards
     const movieCards = document.querySelectorAll<HTMLDivElement>('.movie-card');
     console.log('Setting up interactions for', movieCards.length, 'movie cards');
     
     movieCards.forEach(card => {
+        // Hover effects
         card.addEventListener('mouseenter', function () {
             (this as HTMLElement).style.transform = 'translateY(-5px)';
         });
 
         card.addEventListener('mouseleave', function () {
             (this as HTMLElement).style.transform = 'translateY(0)';
+        });
+
+        // Click to expand card
+        card.addEventListener('click', function(e) {
+            // Don't expand if clicking the recommend button
+            if ((e.target as HTMLElement).closest('.btn-recommend')) {
+                return;
+            }
+            
+            const movieData = (this as HTMLElement).getAttribute('data-movie');
+            if (movieData) {
+                try {
+                    const movie = JSON.parse(movieData);
+                    openMovieModal(movie);
+                } catch (error) {
+                    console.error('Error parsing movie data:', error);
+                }
+            }
         });
     });
 
@@ -384,11 +440,17 @@ function setupMovieCardInteractions() {
     });
 }
 
-async function getRecommendations(imdbId: string) {
+async function getRecommendations(imdbId: string, skipLoadingState = false) {
     console.log('Getting recommendations for IMDb ID:', imdbId);
     
+    // Track current recommendation state
+    currentRecommendationId = imdbId;
+    currentSearchQuery = null;
+    
     try {
-        showLoadingState();
+        if (!skipLoadingState) {
+            showLoadingState();
+        }
         
         // Prepare recommendation options with user location and language
         const options: any = {
@@ -460,4 +522,155 @@ function triggerCardAnimations() {
             card.style.animation = `slideInFade 0.6s ease-out forwards`;
         }, delay);
     });
+}
+
+function openMovieModal(movie: MovieResult) {
+    // Create modal HTML
+    const modalHtml = createMovieModalHtml(movie);
+    
+    // Remove existing modal if any
+    const existingModal = document.querySelector('.movie-modal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // Add modal to body
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Get modal elements
+    const modal = document.querySelector('.movie-modal') as HTMLElement;
+    const closeBtn = modal.querySelector('.movie-modal-close') as HTMLButtonElement;
+    const recommendBtn = modal.querySelector('.movie-modal-btn[data-action="recommend"]') as HTMLButtonElement;
+    const secondaryCloseBtn = modal.querySelector('.movie-modal-btn[data-action="close"]') as HTMLButtonElement;
+    const posterElement = modal.querySelector('.movie-modal-poster') as HTMLElement;
+    
+    // Handle poster fallback
+    if (posterElement && movie.poster) {
+        const highResPosterUrl = movie.poster.replace('X300', 'X3000');
+        const fallbackPosterUrl = movie.poster;
+        
+        // Test if high-res poster loads, fallback to regular size if not
+        const testImage = new Image();
+        testImage.onload = () => {
+            // High-res loaded successfully
+            posterElement.style.backgroundImage = `url('${highResPosterUrl}')`;
+        };
+        testImage.onerror = () => {
+            // High-res failed, use original
+            posterElement.style.backgroundImage = `url('${fallbackPosterUrl}')`;
+        };
+        testImage.src = highResPosterUrl;
+    }
+    
+    // Show modal with animation
+    setTimeout(() => {
+        modal.classList.add('active');
+    }, 10);
+    
+    // Close modal handlers
+    const closeModal = () => {
+        modal.classList.remove('active');
+        setTimeout(() => {
+            modal.remove();
+        }, 300);
+    };
+    
+    closeBtn.addEventListener('click', closeModal);
+    if (secondaryCloseBtn) {
+        secondaryCloseBtn.addEventListener('click', closeModal);
+    }
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            closeModal();
+        }
+    });
+    
+    // Escape key to close
+    const escapeHandler = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+            closeModal();
+            document.removeEventListener('keydown', escapeHandler);
+        }
+    };
+    document.addEventListener('keydown', escapeHandler);
+    
+    // Recommend button handler
+    if (recommendBtn) {
+        recommendBtn.addEventListener('click', async () => {
+            closeModal();
+            await getRecommendations(movie.imdb_id);
+        });
+    }
+}
+
+function createMovieModalHtml(movie: MovieResult): string {
+    const stars = createStarRating(movie.rating);
+    // Try high-res poster first, fallback to original if not available
+    const highResPosterUrl = movie.poster ? movie.poster.replace('X300', 'X3000') : '/placeholder-poster.jpg';
+    const fallbackPosterUrl = movie.poster || '/placeholder-poster.jpg';
+    const genres = movie.genres.join(', ');
+    const countries = movie.countries.join(', ');
+    const languages = movie.languages.join(', ');
+    
+    return `
+        <div class="movie-modal">
+            <div class="movie-modal-content">
+                <button class="movie-modal-close">
+                    <i class="fas fa-times"></i>
+                </button>
+                
+                <div class="movie-modal-poster" 
+                     style="background-image: url('${highResPosterUrl}')"
+                     data-fallback="${fallbackPosterUrl}"></div>
+                
+                <div class="movie-modal-info">
+                    <div>
+                        <h2 class="movie-modal-title">${movie.title}</h2>
+                        <div class="movie-modal-year">${movie.year}</div>
+                        
+                        <div class="movie-modal-rating">
+                            <div class="movie-modal-stars">${stars}</div>
+                            <div class="movie-modal-rating-value">${(movie.rating * 10).toFixed(1)}/10</div>
+                            <div class="movie-modal-votes">(${movie.votes.toLocaleString()} votes)</div>
+                        </div>
+                        
+                        <div class="movie-modal-details">
+                            <div class="movie-modal-detail">
+                                <div class="movie-modal-detail-label">Genres</div>
+                                <div class="movie-modal-detail-value">${genres || 'Not specified'}</div>
+                            </div>
+                            <div class="movie-modal-detail">
+                                <div class="movie-modal-detail-label">Countries</div>
+                                <div class="movie-modal-detail-value">${countries || 'Not specified'}</div>
+                            </div>
+                            <div class="movie-modal-detail">
+                                <div class="movie-modal-detail-label">Languages</div>
+                                <div class="movie-modal-detail-value">${languages || 'Not specified'}</div>
+                            </div>
+                            <div class="movie-modal-detail">
+                                <div class="movie-modal-detail-label">Popularity Score</div>
+                                <div class="movie-modal-detail-value">${movie.popularity_score.toFixed(2)}</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="movie-modal-plot">
+                        <div class="movie-modal-plot-title">Plot Summary</div>
+                        <div class="movie-modal-plot-text">${movie.plot || 'No plot summary available.'}</div>
+                    </div>
+                    
+                    <div class="movie-modal-actions">
+                        <button class="movie-modal-btn" data-action="recommend">
+                            <i class="fas fa-magic"></i>
+                            Get Recommendations
+                        </button>
+                        <button class="movie-modal-btn secondary" data-action="close">
+                            <i class="fas fa-times"></i>
+                            Close
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
 }
