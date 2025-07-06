@@ -61,6 +61,8 @@ public/
 # Datasets
 datasets/raw/
 datasets/dist/back
+*.cp.parquet
+*.cp.parquet.back
 
 # Direnv
 .direnv/
