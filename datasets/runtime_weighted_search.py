@@ -210,76 +210,15 @@ class RuntimeWeightedSearch:
         
         return results
 
-def create_component_embeddings():
-    """
-    Create and save separate embedding components for runtime weighting
-    """
-    logger.info("Creating separate embedding components...")
-    
-    # Load data
-    movies_df = read_parquet_file(Path("datasets/dist/movies_processed_sn.parquet"), lazy=False)
-    embeddings_df = read_parquet_file(Path("datasets/dist/movies_embeddings.parquet"), lazy=False)
-    
-    # Filter and align
-    filtered_movies_df = movies_df.filter(pl.col("plot") != "")
-    filtered_tids = set(filtered_movies_df["tid"].to_list())
-    filtered_embeddings_df = embeddings_df.filter(pl.col("tid").is_in(filtered_tids))
-    
-    movies_df = filtered_movies_df.sort("tid")
-    embeddings_df = filtered_embeddings_df.sort("tid")
-    
-    # Extract plot and genre embeddings (already computed)
-    plot_embeddings = np.vstack(embeddings_df["plot_embedding"].to_list()).astype("float32")
-    genre_embeddings = np.vstack(embeddings_df["genre_embedding"].to_list()).astype("float32")
-    
-    # Truncate to expected dimensions
-    plot_embeddings = plot_embeddings[:, :1024]
-    genre_embeddings = genre_embeddings[:, :64]
-    
-    # Create culturally-aware embedding system to generate localization and popularity
-    ca_embedding = CulturallyAwareMovieEmbedding(
-        plot_dim=1024, genre_dim=64, localization_dim=128  # Increased from 32 to 128
-    )
-    
-    # Build vocabularies
-    ca_embedding.build_localization_vocabularies(movies_df)
-    
-    # Create localization embeddings
-    localization_embeddings = ca_embedding._create_localization_enriched_embeddings(
-        movies_df, plot_embeddings, ca_embedding.localization_dim
-    )
-    
-    # Create popularity vectors
-    popularity_vectors = ca_embedding.create_popularity_boost_vector(movies_df)
-    
-    # Normalize each component independently
-    faiss.normalize_L2(plot_embeddings)
-    faiss.normalize_L2(genre_embeddings)
-    faiss.normalize_L2(localization_embeddings)
-    # Note: popularity vectors are intentionally not normalized to preserve magnitude differences
-    
-    # Save components
-    components_path = "datasets/dist/embedding_components.npz"
-    np.savez_compressed(components_path,
-                       plot_embeddings=plot_embeddings,
-                       genre_embeddings=genre_embeddings,
-                       localization_embeddings=localization_embeddings,
-                       popularity_vectors=popularity_vectors)
-    
-    logger.info(f"Saved embedding components to {components_path}")
-    logger.info(f"Component shapes:")
-    logger.info(f"  Plot: {plot_embeddings.shape}")
-    logger.info(f"  Genre: {genre_embeddings.shape}")
-    logger.info(f"  Localization: {localization_embeddings.shape}")
-    logger.info(f"  Popularity: {popularity_vectors.shape}")
-
 def test_runtime_weighting():
     """Test the runtime weighting system with Hong Kong queries"""
     
     # First create components if they don't exist
-    components_path = "datasets/dist/embedding_components.npz"
+    components_path = "datasets/dist/culturally_aware_model.npz"
     if not Path(components_path).exists():
-        create_component_embeddings()
+        logger.error(f"Embedding components not found at {components_path}")
+        logger.error("Please run: python -m datasets.culturally_aware_embedding")
+        return
     
     # Initialize search system
     search_system = RuntimeWeightedSearch()

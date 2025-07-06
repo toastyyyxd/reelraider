@@ -195,8 +195,20 @@ class CulturallyAwareMovieEmbedding:
         logger.info(f"Created plot-enriched localization matrix with shape: {final_matrix.shape}")
         return final_matrix
     
-    def _create_enriched_localization_vector(self, loc_vec, loc_combo, subcluster_id, target_dim):
-        """Create enriched localization vector with better dimensionality handling"""
+    def _create_enriched_localization_vector(self, loc_vec, loc_combo, subcluster_id, n_subclusters, target_dim):
+        """
+        Create enriched localization vector with better dimensionality handling
+        
+        Args:
+            loc_vec: Base localization vector with active features
+            loc_combo: Tuple of active feature indices for this localization group
+            subcluster_id: ID of the subcluster this movie belongs to (0 to n_subclusters-1)
+            n_subclusters: Total number of subclusters in this localization group
+            target_dim: Target dimension for the output vector
+            
+        Returns:
+            Enriched localization vector incorporating both base features and cluster information
+        """
         enriched = np.zeros(target_dim, dtype=np.float32)
         
         # Get active features (countries and languages that are set)
@@ -207,19 +219,24 @@ class CulturallyAwareMovieEmbedding:
             if target_dim >= 64:
                 # Use a smarter mapping that preserves more locality
                 # Map each active feature to multiple dimensions to reduce collisions
+                target_half = max(1, target_dim // 2)  # Ensure at least 1
+                target_quarter = max(1, target_dim // 4)  # Ensure at least 1
+                
                 for i, feature_idx in enumerate(active_features):
                     # Map each feature to 2-3 dimensions using different hash functions
-                    base_pos = (feature_idx * 17) % (target_dim // 2)  # Use first half
+                    base_pos = (feature_idx * 17) % target_half  # Use first half
                     enriched[base_pos] = 0.8  # Strong signal
                     
                     # Add secondary mapping to reduce collisions
-                    secondary_pos = (feature_idx * 31 + 7) % (target_dim // 2) + (target_dim // 2)
-                    enriched[secondary_pos] = 0.6  # Secondary signal
+                    secondary_pos = (feature_idx * 31 + 7) % target_half + target_half
+                    if secondary_pos < target_dim:  # Bounds check
+                        enriched[secondary_pos] = 0.6  # Secondary signal
                     
                     # Add a third weak signal for robustness
                     if i < 3:  # Only for first few features to avoid overcrowding
-                        tertiary_pos = (feature_idx * 53 + 13) % (target_dim // 4)
-                        enriched[tertiary_pos] = max(enriched[tertiary_pos], 0.3)
+                        tertiary_pos = (feature_idx * 53 + 13) % target_quarter
+                        if tertiary_pos < target_dim:  # Bounds check
+                            enriched[tertiary_pos] = max(enriched[tertiary_pos], 0.3)
             else:
                 # Fallback to hash-based approach for smaller dimensions
                 feature_hash = hashlib.md5(str(sorted(active_features)).encode()).hexdigest()
@@ -233,9 +250,17 @@ class CulturallyAwareMovieEmbedding:
             combo_hash = hashlib.md5(str(loc_combo).encode()).hexdigest()
             cluster_hash = hashlib.md5(f"{combo_hash}_{subcluster_id}".encode()).hexdigest()
             
-            for i in range(min(16, target_dim - remaining_start)):
+            # Use n_subclusters to normalize the cluster influence
+            cluster_strength = 0.2 / max(1, n_subclusters)  # Weaker signal for more clusters
+            
+            # Add normalized cluster ID as a direct feature
+            if target_dim > remaining_start:
+                normalized_cluster_id = subcluster_id / max(1, n_subclusters - 1) if n_subclusters > 1 else 0
+                enriched[remaining_start] = normalized_cluster_id * 0.3  # Direct cluster signal
+            
+            for i in range(min(15, target_dim - remaining_start - 1)):  # -1 to account for direct cluster feature
                 byte_val = int(cluster_hash[i*2:(i+1)*2], 16)
-                enriched[remaining_start + i] = (byte_val / 255.0) * 0.2  # Weaker sub-cluster signal
+                enriched[remaining_start + 1 + i] = (byte_val / 255.0) * cluster_strength
         
         return enriched
     
@@ -249,16 +274,21 @@ class CulturallyAwareMovieEmbedding:
         if len(active_features) > 0:
             if target_dim >= 64:
                 # Use the same smarter mapping as above
+                target_half = max(1, target_dim // 2)  # Ensure at least 1
+                target_quarter = max(1, target_dim // 4)  # Ensure at least 1
+                
                 for i, feature_idx in enumerate(active_features):
-                    base_pos = (feature_idx * 17) % (target_dim // 2)
+                    base_pos = (feature_idx * 17) % target_half
                     enriched[base_pos] = 0.8
                     
-                    secondary_pos = (feature_idx * 31 + 7) % (target_dim // 2) + (target_dim // 2)
-                    enriched[secondary_pos] = 0.6
+                    secondary_pos = (feature_idx * 31 + 7) % target_half + target_half
+                    if secondary_pos < target_dim:  # Bounds check
+                        enriched[secondary_pos] = 0.6
                     
                     if i < 3:
-                        tertiary_pos = (feature_idx * 53 + 13) % (target_dim // 4)
-                        enriched[tertiary_pos] = max(enriched[tertiary_pos], 0.3)
+                        tertiary_pos = (feature_idx * 53 + 13) % target_quarter
+                        if tertiary_pos < target_dim:  # Bounds check
+                            enriched[tertiary_pos] = max(enriched[tertiary_pos], 0.3)
             else:
                 # Fallback to hash-based approach
                 feature_hash = hashlib.md5(str(sorted(active_features)).encode()).hexdigest()
@@ -283,6 +313,10 @@ class CulturallyAwareMovieEmbedding:
         logger.info("Creating popularity boost vectors...")
         
         # Get normalized votes (sn_votes)
+        if "sn_votes" not in movies_df.columns:
+            logger.warning("sn_votes column not found - using uniform popularity boost")
+            return np.ones((len(movies_df), 1), dtype=np.float32)
+            
         sn_votes = movies_df["sn_votes"].to_numpy().astype(np.float32)
         
         # Handle None/NaN values - give them low boost (less popular)
@@ -303,8 +337,17 @@ class CulturallyAwareMovieEmbedding:
         popularity_boost = log_popularity + exponential_boost
         
         # Normalize to reasonable range (0.01 to 2.0)
-        popularity_boost = (popularity_boost - popularity_boost.min()) / (popularity_boost.max() - popularity_boost.min())
-        popularity_boost = popularity_boost * 1.99 + 0.01  # Scale to [0.01, 2.0]
+        boost_min = popularity_boost.min()
+        boost_max = popularity_boost.max()
+        boost_range = boost_max - boost_min
+        
+        if boost_range > 1e-10:  # Avoid division by zero
+            popularity_boost = (popularity_boost - boost_min) / boost_range
+            popularity_boost = popularity_boost * 1.99 + 0.01  # Scale to [0.01, 2.0]
+        else:
+            # All values are the same - use neutral boost
+            logger.warning("All popularity values are identical - using neutral boost of 1.0")
+            popularity_boost = np.full_like(popularity_boost, 1.0)
         
         logger.info(f"Original sn_votes range: {sn_votes.min():.3f} to {sn_votes.max():.3f}")
         logger.info(f"Popularity boost range: {popularity_boost.min():.3f} to {popularity_boost.max():.3f}")
@@ -336,11 +379,24 @@ class CulturallyAwareMovieEmbedding:
         """
         logger.info("Fitting culturally-aware embedding model...")
         
+        # Validate inputs
+        if len(movies_df) == 0:
+            raise ValueError("Empty movies dataframe")
+        if plot_embeddings.shape[0] == 0:
+            raise ValueError("Empty plot embeddings")
+        if genre_embeddings.shape[0] == 0:
+            raise ValueError("Empty genre embeddings")
+            
         # Build localization vocabularies
         self.build_localization_vocabularies(movies_df)
         
         # Store plot and genre embeddings for query processing
         # This enables semantic genre inference for queries
+        if plot_embeddings.shape[1] < self.plot_dim:
+            logger.warning(f"Plot embeddings dimension ({plot_embeddings.shape[1]}) is smaller than expected ({self.plot_dim})")
+        if genre_embeddings.shape[1] < self.genre_dim:
+            logger.warning(f"Genre embeddings dimension ({genre_embeddings.shape[1]}) is smaller than expected ({self.genre_dim})")
+            
         self._stored_plot_embeddings = plot_embeddings[:, :self.plot_dim].astype(np.float32)
         self._stored_genre_embeddings = genre_embeddings[:, :self.genre_dim].astype(np.float32)
         
@@ -398,9 +454,14 @@ class CulturallyAwareMovieEmbedding:
             prefer_popular: If True, bias towards popular movies (default: True)
         """
         # Get plot embedding
-        model = SentenceTransformer("intfloat/multilingual-e5-large")
-        plot_embedding = model.encode([f"passage: {query_text}"], convert_to_numpy=True)
-        plot_embedding = plot_embedding[:, :self.plot_dim]  # Ensure correct dimension
+        try:
+            model = SentenceTransformer("intfloat/multilingual-e5-large")
+            plot_embedding = model.encode([f"passage: {query_text}"], convert_to_numpy=True)
+            plot_embedding = plot_embedding[:, :self.plot_dim]  # Ensure correct dimension
+        except Exception as e:
+            logger.error(f"Failed to create plot embedding: {e}")
+            # Fallback to zero embedding
+            plot_embedding = np.zeros((1, self.plot_dim), dtype=np.float32)
         
         # Create semantic genre embedding for the query
         genre_embedding = self._create_query_genre_embedding(query_text, plot_embedding)
@@ -529,10 +590,22 @@ class CulturallyAwareMovieEmbedding:
         # Flatten the query embedding for comparison
         query_flat = query_plot_embedding.flatten()
         
+        # Ensure we have valid embeddings
+        if self._stored_plot_embeddings is None or len(self._stored_plot_embeddings) == 0:
+            logger.warning("No stored plot embeddings available for semantic genre inference")
+            return np.zeros((1, self.genre_dim), dtype=np.float32)
+        
         # Find top similar movies by plot similarity
-        similarities = np.dot(self._stored_plot_embeddings, query_flat) / (
-            np.linalg.norm(self._stored_plot_embeddings, axis=1) * np.linalg.norm(query_flat)
-        )
+        try:
+            similarities = np.dot(self._stored_plot_embeddings, query_flat) / (
+                np.linalg.norm(self._stored_plot_embeddings, axis=1) * np.linalg.norm(query_flat)
+            )
+            
+            # Handle potential NaN values
+            similarities = np.nan_to_num(similarities, nan=0.0)
+        except Exception as e:
+            logger.error(f"Error computing similarities: {e}")
+            return np.zeros((1, self.genre_dim), dtype=np.float32)
         
         # Get top 20 most similar movies
         top_indices = np.argsort(similarities)[-20:]
@@ -616,9 +689,88 @@ class CulturallyAwareMovieEmbedding:
             self._stored_genre_embeddings = None
         
         logger.info(f"Culturally-aware model loaded from {metadata_path}")
-
+    
+    def create_separate_components(self, movies_df, plot_embeddings, genre_embeddings, output_path: str = "datasets/dist/embedding_components.npz"):
+        """
+        Create separate embedding components for runtime weighted search
+        
+        This method creates and saves individual embedding components (plot, genre, 
+        localization, popularity) that can be combined with different weights at runtime
+        by the RuntimeWeightedSearch system.
+        
+        Args:
+            movies_df: DataFrame with movie metadata
+            plot_embeddings: Pre-computed plot embeddings from embedding.py
+            genre_embeddings: Pre-computed enriched genre embeddings from embedding.py
+            output_path: Path to save the components file
+        """
+        logger.info("Creating separate embedding components for runtime weighted search...")
+        
+        # Validate inputs
+        if len(movies_df) == 0:
+            raise ValueError("Empty movies dataframe")
+        if plot_embeddings.shape[0] == 0:
+            raise ValueError("Empty plot embeddings")
+        if genre_embeddings.shape[0] == 0:
+            raise ValueError("Empty genre embeddings")
+            
+        # Build localization vocabularies
+        self.build_localization_vocabularies(movies_df)
+        
+        # Ensure proper dimensions by truncating if needed
+        plot_embeddings_comp = plot_embeddings[:, :self.plot_dim].astype(np.float32)
+        genre_embeddings_comp = genre_embeddings[:, :self.genre_dim].astype(np.float32)
+        
+        # Create localization embeddings
+        localization_embeddings = self._create_localization_enriched_embeddings(
+            movies_df, plot_embeddings, self.localization_dim
+        )
+        
+        # Create popularity vectors
+        popularity_vectors = self.create_popularity_boost_vector(movies_df)
+        
+        # Normalize each component independently for runtime combination
+        faiss.normalize_L2(plot_embeddings_comp)
+        faiss.normalize_L2(genre_embeddings_comp)
+        faiss.normalize_L2(localization_embeddings)
+        # Note: popularity vectors are intentionally not normalized to preserve magnitude differences
+        
+        # Ensure all components have the same number of movies
+        n_movies = len(movies_df)
+        assert plot_embeddings_comp.shape[0] == n_movies, f"Plot embeddings mismatch: {plot_embeddings_comp.shape[0]} vs {n_movies}"
+        assert genre_embeddings_comp.shape[0] == n_movies, f"Genre embeddings mismatch: {genre_embeddings_comp.shape[0]} vs {n_movies}"
+        assert localization_embeddings.shape[0] == n_movies, f"Localization embeddings mismatch: {localization_embeddings.shape[0]} vs {n_movies}"
+        assert popularity_vectors.shape[0] == n_movies, f"Popularity vectors mismatch: {popularity_vectors.shape[0]} vs {n_movies}"
+        
+        # Save components
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        np.savez_compressed(output_path,
+                           plot_embeddings=plot_embeddings_comp,
+                           genre_embeddings=genre_embeddings_comp,
+                           localization_embeddings=localization_embeddings,
+                           popularity_vectors=popularity_vectors)
+        
+        logger.info(f"Saved embedding components to {output_path}")
+        logger.info(f"Component shapes:")
+        logger.info(f"  Plot: {plot_embeddings_comp.shape}")
+        logger.info(f"  Genre: {genre_embeddings_comp.shape}")
+        logger.info(f"  Localization: {localization_embeddings.shape}")
+        logger.info(f"  Popularity: {popularity_vectors.shape}")
+        
+        return output_path
 
 if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Generate culturally-aware movie embeddings')
+    parser.add_argument('--skip-components', action='store_true',
+                      help='Skip creating separate components for runtime weighted search')
+    parser.add_argument('--localization-dim', type=int, default=128,
+                      help='Dimension for localization embeddings (default: 128)')
+    args = parser.parse_args()
+    
     # Load data
     logger.info("Loading movie data and embeddings...")
     movies_df = read_parquet_file(Path("datasets/dist/movies_processed_sn.parquet"), lazy=False)
@@ -643,13 +795,13 @@ if __name__ == "__main__":
     
     # Create culturally-aware embedding system
     ca_embedding = CulturallyAwareMovieEmbedding(
-        plot_dim=1024,              # Full plot embedding dimension
-        genre_dim=64,               # Enriched genre embedding dimension
-        localization_dim=32,        # Country/language embedding dimension
-        plot_weight=0.50,           # Primary semantic signal
-        genre_weight=0.25,          # Thematic relevance
-        localization_weight=0.05,   # Cultural relevance
-        popularity_weight=0.20      # Popularity boost (high weight, high impact)
+        plot_dim=1024,                  # Full plot embedding dimension
+        genre_dim=64,                   # Enriched genre embedding dimension
+        localization_dim=args.localization_dim,  # Country/language embedding dimension (configurable)
+        plot_weight=0.50,               # Primary semantic signal
+        genre_weight=0.25,              # Thematic relevance
+        localization_weight=0.05,       # Cultural relevance
+        popularity_weight=0.20          # Popularity boost (high weight, high impact)
     )
     
     # Fit and transform
@@ -662,8 +814,18 @@ if __name__ == "__main__":
     index.add(combined_embeddings)
     
     # Save everything
-    faiss.write_index(index, "datasets/dist/movies_culturally_aware.index")
+    faiss.write_index(index, "datasets/dist/culturally_aware_model.index")
     ca_embedding.save_model("datasets/dist/culturally_aware_model.json")
+    
+    # Create separate components for runtime weighted search (unless skipped)
+    if not args.skip_components:
+        logger.info("Creating separate components for runtime weighted search...")
+        ca_embedding.create_separate_components(
+            movies_df, plot_embeddings, genre_embeddings,
+            "datasets/dist/culturally_aware_model.npz"
+        )
+    else:
+        logger.info("Skipped creating separate components (--skip-components specified)")
     
     logger.info(f"Culturally-aware index built with {index.ntotal} vectors of dimension {combined_embeddings.shape[1]}")
     
@@ -701,7 +863,7 @@ if __name__ == "__main__":
                 
                 logger.info(f"{i+1}. {title}")
                 logger.info(f"    Rating: {rating:.2f}, Votes: {int(votes) if votes else 0} (norm: {sn_votes:.3f})")
-                logger.info(f"    Countries: {countries_movie}")
-                logger.info(f"    Languages: {languages_movie}")
+                logger.info(f"    Countries: {countries_movie.str.concat(', ')}")
+                logger.info(f"    Languages: {languages_movie.str.concat(', ')}")
                 logger.info(f"    Similarity: {D[0][i]:.4f}")
         logger.info("-" * 30)

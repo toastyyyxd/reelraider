@@ -68,16 +68,20 @@ class MovieQueryEngine:
     """
     High-level query engine for culturally-aware movie search with runtime weight adjustment
     """
-    
-    def __init__(self, data_dir: str = "datasets/dist", use_runtime_weights: bool = True):
+
+    def __init__(self, model_path: str = "datasets/dist/culturally_aware_model.json",
+                 data_file: str = "datasets/dist/movies_processed_sn.parquet",
+                 use_runtime_weights: bool = True):
         """
         Initialize the query engine by loading pre-built indices and data
         
         Args:
-            data_dir: Directory containing the processed data and indices
+            model_path: Path to the culturally-aware embedding model
+            data_file: Path to the processed movie data file
             use_runtime_weights: Whether to use runtime weight adjustment (recommended)
         """
-        self.data_dir = Path(data_dir)
+        self.model_path = Path(model_path)
+        self.data_file = Path(data_file)
         self.use_runtime_weights = use_runtime_weights
         self.movies_df = None
         self.embedding_system = None
@@ -98,7 +102,7 @@ class MovieQueryEngine:
     
     def _load_data(self):
         """Load the processed movie data"""
-        movies_path = self.data_dir / "movies_processed_sn.parquet"
+        movies_path = self.data_file
         if not movies_path.exists():
             raise FileNotFoundError(f"Movie data not found at {movies_path}")
         
@@ -110,8 +114,8 @@ class MovieQueryEngine:
     
     def _load_runtime_weighted_search(self):
         """Load the runtime weighted search system (recommended)"""
-        components_path = self.data_dir / "embedding_components.npz"
-        
+        components_path = self.model_path.with_suffix(".npz")
+
         if not components_path.exists():
             raise FileNotFoundError(f"Embedding components not found at {components_path}")
         
@@ -122,7 +126,7 @@ class MovieQueryEngine:
     
     def _load_embedding_system(self):
         """Load the culturally-aware embedding system"""
-        model_path = self.data_dir / "culturally_aware_model.json"
+        model_path = self.model_path.with_suffix(".json")
         if not model_path.exists():
             raise FileNotFoundError(f"Embedding model not found at {model_path}")
         
@@ -139,7 +143,7 @@ class MovieQueryEngine:
     
     def _load_faiss_index(self):
         """Load the pre-built FAISS index"""
-        index_path = self.data_dir / "movies_culturally_aware.index"
+        index_path = self.model_path.with_suffix(".index")
         if not index_path.exists():
             raise FileNotFoundError(f"FAISS index not found at {index_path}")
         
@@ -444,6 +448,10 @@ def main():
     """Command-line interface for the query engine"""
     parser = argparse.ArgumentParser(description='ReelRaider Movie Query Engine')
     parser.add_argument('query', nargs='?', help='Search query for movies')
+    parser.add_argument('--model-path', '-m', type=str, default='datasets/dist/culturally_aware_model',
+                      help='Name of the culturally-aware embedding model for <model_name>.json/npz/index')
+    parser.add_argument('--data-file', '-d', type=str, default='datasets/dist/movies_processed_sn.parquet',
+                      help='Path to the processed movie data file')
     parser.add_argument('--max-results', '-n', type=int, default=10,
                       help='Maximum number of results (default: 10)')
     parser.add_argument('--countries', nargs='+', 
@@ -515,7 +523,7 @@ def main():
     
     # Initialize query engine
     try:
-        engine = MovieQueryEngine(use_runtime_weights=not args.no_runtime_weights)
+        engine = MovieQueryEngine(model_path=args.model_path, data_file=args.data_file, use_runtime_weights=not args.no_runtime_weights)
     except FileNotFoundError as e:
         logger.error(f"Failed to initialize query engine: {e}")
         logger.error("Make sure you have run the embedding pipeline first:")

@@ -11,7 +11,7 @@ from sklearn.preprocessing import StandardScaler, normalize
 from sklearn.cluster import KMeans
 
 # Constants for better maintainability
-DEFAULT_GENRE_DIM = 32
+DEFAULT_GENRE_DIM = 64
 DEFAULT_PLOT_WEIGHT = 0.8
 DEFAULT_GENRE_WEIGHT = 0.2
 DEFAULT_RANDOM_STATE = 42
