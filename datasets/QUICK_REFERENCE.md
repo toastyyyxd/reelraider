@@ -8,8 +8,8 @@
 ```bash
 # From project root - run these in order
 python -m datasets.ids           # Process IMDb IDs
-python -m datasets.ratings       # Import ratings data  
 python -m datasets.omdb          # Fetch plot summaries via OMDb API
+python -m datasets.ratings       # Fine-tune ratings data  
 python -m datasets.scalar_norm   # Normalize popularity scores
 python -m datasets.embedding     # Generate plot/genre embeddings
 python -m datasets.culturally_aware_embedding  # Build 128-dim cultural embeddings ⭐
