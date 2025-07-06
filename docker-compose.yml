@@ -1,19 +1,60 @@
+version: '3.8'
+
 services:
+  # Node.js web server and API
   reelraider-web:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
     ports:
       - "8000:8000"
     volumes:
-      - ./dist:/app/dist
+      # Mount data directory for serving processed data
+      - ./dist:/app/dist:ro
     environment:
       - NODE_ENV=production
-  reelraider-service: # grpc with python
+      - GRPC_SERVICE_URL=reelraider-service:50051
+    depends_on:
+      reelraider-service:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - reelraider-net
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Python gRPC service for data processing and search
+  reelraider-service:
     build:
       context: ./datasets
       dockerfile: Dockerfile
+      target: production
     ports:
       - "50051:50051"
     volumes:
-      - ./datasets:/app/datasets
+      # Mount datasets and processed data
+      - ./datasets:/app/datasets:ro
+      - ./dist:/app/dist:rw
     environment:
       - PYTHONUNBUFFERED=1
+      - GRPC_PORT=50051
+      - MODEL_PATH=/app/dist/embedding_components.npz
+      - DATA_FILE=/app/dist/movies_enriched.parquet
+    restart: unless-stopped
+    networks:
+      - reelraider-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import datasets.interop_service; print('Service healthy')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  reelraider-net:
+    driver: bridge

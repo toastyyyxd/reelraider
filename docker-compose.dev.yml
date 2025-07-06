@@ -1,0 +1,28 @@
+# Development override for docker-compose
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+version: '3.8'
+
+services:
+  reelraider-web:
+    build:
+      target: builder  # Use builder stage for development
+    volumes:
+      # Enable hot reload by mounting source
+      - ./src:/app/src:ro
+      - ./dist:/app/dist:rw
+    environment:
+      - NODE_ENV=development
+    command: ["sh", "-c", "npm run build && npm start"]
+
+  reelraider-service:
+    volumes:
+      # Enable code changes without rebuild
+      - ./datasets:/app/datasets:rw
+      - ./dist:/app/dist:rw
+    environment:
+      - PYTHONUNBUFFERED=1
+      - GRPC_PORT=50051
+      - PYTHON_ENV=development
+    # Override command for development
+    command: ["python", "-m", "datasets.interop_service", "--debug"]

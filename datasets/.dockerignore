@@ -1,0 +1,47 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environment files
+.env
+.env.*
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Documentation
+*.md
+
+# Large raw data files (should be downloaded in container if needed)
+raw/
+*.gz
+*.zip
+*.tar
+
+# Build artifacts that will be generated in container
+*.pkl
+*.joblib
+
+# Test files
+test/
+tests/
+*_test.py
+test_*.py
