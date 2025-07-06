@@ -714,12 +714,32 @@ if __name__ == "__main__":
                       help='Dimension for enriched genre embeddings (default: 128)')
     parser.add_argument('--localization-dim', type=int, default=128,
                       help='Dimension for localization embeddings (default: 128)')
+    parser.add_argument('--movies-file', type=str, default='datasets/dist/movies_processed_sn.parquet',
+                      help='Path to processed movies parquet file (default: datasets/dist/movies_processed_sn.parquet)')
+    parser.add_argument('--embeddings-file', type=str, default='datasets/dist/movies_embeddings.parquet',
+                      help='Path to movie embeddings parquet file (default: datasets/dist/movies_embeddings.parquet)')
     args = parser.parse_args()
+    
+    # Validate input files exist
+    movies_path = Path(args.movies_file)
+    embeddings_path = Path(args.embeddings_file)
+    
+    if not movies_path.exists():
+        logger.error(f"Movies file not found: {movies_path}")
+        logger.error("Please ensure the processed movies file exists or specify a different path with --movies-file")
+        exit(1)
+    
+    if not embeddings_path.exists():
+        logger.error(f"Embeddings file not found: {embeddings_path}")
+        logger.error("Please ensure the embeddings file exists or specify a different path with --embeddings-file")
+        exit(1)
     
     # Load data
     logger.info("Loading movie data and embeddings...")
-    movies_df = read_parquet_file(Path("datasets/dist/movies_processed_sn.parquet"), lazy=False)
-    embeddings_df = read_parquet_file(Path("datasets/dist/movies_embeddings.parquet"), lazy=False)
+    logger.info(f"Movies file: {movies_path}")
+    logger.info(f"Embeddings file: {embeddings_path}")
+    movies_df = read_parquet_file(movies_path, lazy=False)
+    embeddings_df = read_parquet_file(embeddings_path, lazy=False)
     
     # Filter movies with empty plots and align dataframes
     filtered_movies_df = movies_df.filter(pl.col("plot") != "")
