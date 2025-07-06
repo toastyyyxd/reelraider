@@ -10,7 +10,7 @@ import polars as pl
 from polars import DataFrame
 import numpy as np
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from tqdm.asyncio import tqdm as tqdm_asyncio
 
 from datasets.utils import logger, read_parquet_file, write_parquet_file, CheckpointManager
@@ -107,7 +107,11 @@ class OmdbAggregator:
             return default
         return str(value).strip() if isinstance(value, str) else default
 
-    @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=1, max=10))
+    @retry(
+        stop=stop_after_attempt(5), 
+        wait=wait_exponential(multiplier=2, min=2, max=30),
+        retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError, httpx.ReadError, httpx.HTTPStatusError))
+    )
     async def fetch_one(self, tid: np.uint32, client: httpx.AsyncClient):
         """Fetch OMDB data for a single IMDb ID, respecting self-imposed rate limit if set."""
         imdb_id = f"tt{str(tid).zfill(7)}"
@@ -125,10 +129,38 @@ class OmdbAggregator:
             logger.debug(f"Fetching OMDB data for IMDb ID: {imdb_id} (tid={tid})")
             try:
                 response = await client.get("/", params={"i": imdb_id, "plot": "full", "r": "json"})
-                logger.debug(f"Received response for {imdb_id}: {response.status_code}")
-                data = response.json()
+                logger.debug(f"Received response for {imdb_id}: {response.status_code}, Headers: {dict(response.headers)}")
+                response.raise_for_status()  # Raise HTTPStatusError for bad status codes
+                try:
+                    data = response.json()
+                    logger.debug(f"Successfully parsed JSON for {imdb_id}")
+                except Exception as json_err:
+                    logger.error(f"JSON parsing error for {imdb_id} (tid={tid}): {type(json_err).__name__} - {str(json_err)}")
+                    logger.debug(f"Raw response content for {imdb_id}: {response.text}")
+                    raise
+            except httpx.HTTPStatusError as e:
+                error_details = f"Status: {e.response.status_code}, Headers: {dict(e.response.headers)}, Body: {e.response.text[:500]}"
+                logger.error(f"HTTP status error for {imdb_id} (tid={tid}): {error_details}")
+                # Check if it's a rate limit error
+                if e.response.status_code == 429:
+                    logger.warning(f"Rate limit hit! Status 429 for {imdb_id}")
+                elif e.response.status_code in (403, 503):
+                    logger.warning(f"Possible Cloudflare/rate limiting (status {e.response.status_code}) for {imdb_id}")
+                raise
+            except httpx.TimeoutException as e:
+                logger.error(f"Timeout error for {imdb_id} (tid={tid}): {type(e).__name__} - {str(e)}")
+                raise
+            except httpx.ConnectError as e:
+                logger.error(f"Connection error for {imdb_id} (tid={tid}): {type(e).__name__} - {str(e)}")
+                raise
+            except httpx.ReadError as e:
+                logger.error(f"Read error for {imdb_id} (tid={tid}): {type(e).__name__} - {str(e)}")
+                raise
+            except httpx.RequestError as e:
+                logger.error(f"Request error for {imdb_id} (tid={tid}): {type(e).__name__} - {str(e)}")
+                raise
             except Exception as e:
-                logger.error(f"HTTP error for {imdb_id} (tid={tid}): {e}")
+                logger.error(f"Unexpected error for {imdb_id} (tid={tid}): {type(e).__name__} - {str(e)}")
                 raise
 
             if data.get("Response") == "True":
@@ -153,11 +185,14 @@ class OmdbAggregator:
                     })
                     logger.debug(f"OMDB data for {imdb_id} (tid={tid}) fetched successfully.")
                 except Exception as e:
-                    logger.error(f"Error processing OMDB data for {imdb_id} (tid={tid}): {e}")
-                    raise ValueError(f"Error processing OMDB data for {imdb_id} (tid={tid}): {e}")
+                    logger.error(f"Error processing OMDB data for {imdb_id} (tid={tid}): {type(e).__name__} - {str(e)}")
+                    logger.debug(f"Raw OMDB response for {imdb_id}: {data}")
+                    raise ValueError(f"Error processing OMDB data for {imdb_id} (tid={tid}): {type(e).__name__} - {str(e)}")
             else:
-                logger.error(f"OMDB API error for {imdb_id} (tid={tid}): {data.get('Error', 'Unknown error')}")
-                raise ValueError(f"OMDB API error for {imdb_id} (tid={tid}): {data.get('Error', 'Unknown error')}")
+                error_msg = data.get('Error', 'Unknown error')
+                logger.error(f"OMDB API error for {imdb_id} (tid={tid}): {error_msg}")
+                logger.debug(f"Full OMDB error response for {imdb_id}: {data}")
+                raise ValueError(f"OMDB API error for {imdb_id} (tid={tid}): {error_msg}")
 
     async def fetch_all(self):
         """
@@ -172,9 +207,22 @@ class OmdbAggregator:
             logger.info("All requested OMDB records already fetched. Skipping fetch.")
             return
         logger.info(f"Starting to fetch {len(tids_to_fetch)} OMDB records with max concurrency {self.semaphore._value}.")
+        if self.max_rps:
+            logger.info(f"Rate limiting enabled: {self.max_rps} requests per second")
+        else:
+            logger.info("No rate limiting configured")
+        # Configure timeout: 30s connect, 60s read, 120s total
+        timeout = httpx.Timeout(connect=30.0, read=60.0, write=30.0, pool=120.0)
+        logger.info(f"Using timeouts: connect=30s, read=60s, write=30s, pool=120s")
+        # Configure retries for the client
+        transport = httpx.AsyncHTTPTransport(retries=3)
+        logger.info(f"HTTP transport configured with 3 retries")
+        logger.info(f"Using OMDB API endpoint: https://private.omdbapi.com/")
         async with httpx.AsyncClient(
-            base_url="https://www.omdbapi.com/",
-            params={"apikey": self.api_key}
+            base_url="https://private.omdbapi.com/",
+            params={"apikey": self.api_key},
+            timeout=timeout,
+            transport=transport,
         ) as client:
             total = len(tids_to_fetch)
             start_time = time.perf_counter()
@@ -247,10 +295,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Aggregate OMDB data for IMDb IDs.")
     parser.add_argument('--ids', type=str, default="datasets/dist/ids.parquet", help="Path to Parquet file with IMDb IDs.")
     parser.add_argument('--output', type=str, default="datasets/dist/movies.parquet", help="Output Parquet file path.")
-    parser.add_argument('--max-concurrent', type=int, default=64, help="Maximum concurrent requests to OMDB API.")
+    parser.add_argument('--max-concurrent', type=int, default=2, help="Maximum concurrent requests to OMDB API (very conservative default).")
     parser.add_argument('--limit', type=int, default=None, help="Limit number of records to fetch (optional).")
     parser.add_argument('--api-key', type=str, default=None, help="OMDB API key (overrides environment variable).")
-    parser.add_argument('--max-rps', type=float, default=None, help="Maximum requests per second (self-imposed rate limit, optional).")
+    parser.add_argument('--max-rps', type=float, default=2.0, help="Maximum requests per second (conservative default for paid tier).")
     parser.add_argument('--checkpoint-path', type=str, default="datasets/dist/movies.cp.parquet", help="Path to save OMDB checkpoint (optional).")
     parser.add_argument('--checkpoint-every', type=int, default=500, help="Save checkpoint every N requests (optional).")
     args = parser.parse_args()
