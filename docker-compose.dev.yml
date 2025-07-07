@@ -5,8 +5,7 @@ version: '3.8'
 
 services:
   reelraider-web:
-    build:
-      target: builder  # Use builder stage for development
+wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww      target: builder  # Use builder stage for development
     volumes:
       # Enable hot reload by mounting source
       - ./src:/app/src:ro
@@ -16,6 +15,9 @@ services:
     command: ["sh", "-c", "npm run build && npm start"]
 
   reelraider-service:
+    build:
+      target: builder  # Use builder stage for development
+
     volumes:
       # Enable code changes without rebuild
       - ./datasets:/app/datasets:rw

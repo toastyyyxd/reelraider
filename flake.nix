@@ -19,7 +19,7 @@
           buildInputs = with pkgs; [
             git git-lfs
 
-            nodejs_20 
+            nodejs_20 nodePackages.npm
             nodePackages.typescript
             cloudflared
 

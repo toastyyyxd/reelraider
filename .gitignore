@@ -63,6 +63,10 @@ datasets/raw/
 datasets/dist/back
 *.cp.parquet
 *.cp.parquet.back
+*.parquet
+*.index
+*.npz
+*.npy
 
 # Direnv
 .direnv/
